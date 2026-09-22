@@ -10,32 +10,44 @@ export function getContract() {
   return { name, base: name.split('_')[0], display: name.replace('_', '') };
 }
 
+// 失败后隔一段时间再试：轮询是 300ms 一次，立即重试会在接口不通时持续刷请求
+const RETRY_MS = 30000;
 const multiplierCache = {};
 
 // 同步返回：首次调用发起请求并返回 NaN，下一轮轮询时缓存已就绪
 function getMultiplier(contract) {
   const c = multiplierCache[contract];
-  if (c !== undefined) return c === 'loading' ? NaN : c;
-  multiplierCache[contract] = 'loading';
+  if (typeof c === 'number') return c;
+  if (c && (c.loading || Date.now() - c.failedAt < RETRY_MS)) return NaN;
+  multiplierCache[contract] = { loading: true };
+  const fail = () => (multiplierCache[contract] = { failedAt: Date.now() });
   GM_xmlhttpRequest({
     method: 'GET',
     url: CONTRACT_API + contract,
+    timeout: 10000,
     onload: (r) => {
-      try {
-        multiplierCache[contract] = num(JSON.parse(r.responseText).quanto_multiplier);
-      } catch (e) {
-        delete multiplierCache[contract]; // 失败下次重试
-      }
+      const v = (() => {
+        try {
+          return num(JSON.parse(r.responseText).quanto_multiplier);
+        } catch (e) {
+          return NaN;
+        }
+      })();
+      if (v > 0) multiplierCache[contract] = v;
+      else fail();
     },
-    onerror: () => delete multiplierCache[contract],
+    onerror: fail,
+    ontimeout: fail,
   });
   return NaN;
 }
 
-// 统一换算成“币”的数量，否则仓位单位和下单单位不同时无法相加
-export function toCoin(qty, unit, price, ctx) {
+// 统一换算成“币”的数量，否则仓位单位和下单单位不同时无法相加。
+// USDT 单位的含义（名义价值还是保证金）未经验证，算错会误导下单，所以不支持
+export const isSupportedUnit = (unit, ctx) => !unit || unit === ctx.base || unit === '张';
+
+export function toCoin(qty, unit, ctx) {
   if (!unit || unit === ctx.base) return qty;
   if (unit === '张') return qty * getMultiplier(ctx.name);
-  if (unit === 'USDT') return price > 0 ? qty / price : NaN; // 按名义价值换算
   return NaN;
 }

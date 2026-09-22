@@ -1,5 +1,5 @@
 import { num } from '../utils/number.js';
-import { toCoin } from './contract.js';
+import { isSupportedUnit, toCoin } from './contract.js';
 
 const sideOf = (texts) => (texts.includes('多') ? 'long' : texts.includes('空') ? 'short' : null);
 
@@ -12,7 +12,8 @@ export function readPositions(ctx) {
     const size = Math.abs(num(sizeText));
     const unit = (sizeText.match(/[^\d.,\s-]+$/) || [''])[0];
     if (!(entry > 0) || !(size > 0)) return;
-    result[side] = { entry, entryText, size: toCoin(size, unit, entry, ctx) };
+    // 仓位单位跟随下单单位设置，USDT 模式下直接视为不可用
+    result[side] = { entry, entryText, size: isSupportedUnit(unit, ctx) ? toCoin(size, unit, ctx) : NaN };
   };
 
   document.querySelectorAll('table.position-table tbody tr').forEach((tr) => {

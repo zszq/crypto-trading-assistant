@@ -1,12 +1,14 @@
 // ==UserScript==
 // @name         Gate 合约助手
 // @namespace    http://tampermonkey.net/
-// @version      1.2.0
+// @version      1.5.0
 // @author       zl
 // @description  Gate USDT 永续合约：限价下单时预估开仓后的持仓均价
 // @match        https://www.gate.com/*futures/USDT/*
 // @match        https://www.gate.io/*futures/USDT/*
 // @connect      api.gateio.ws
+// @grant        GM_getValue
+// @grant        GM_setValue
 // @grant        GM_xmlhttpRequest
 // ==/UserScript==
 
@@ -14,6 +16,8 @@
 	"use strict";
 	var PANEL_ID = "tm-avg-preview";
 	var CONTRACT_API = "https://api.gateio.ws/api/v4/futures/usdt/contracts/";
+	var _GM_getValue = (() => typeof GM_getValue != "undefined" ? GM_getValue : void 0)();
+	var _GM_setValue = (() => typeof GM_setValue != "undefined" ? GM_setValue : void 0)();
 	var _GM_xmlhttpRequest = (() => typeof GM_xmlhttpRequest != "undefined" ? GM_xmlhttpRequest : void 0)();
 	var num = (s) => {
 		const v = parseFloat(String(s ?? "").replace(/,/g, ""));
@@ -30,29 +34,38 @@
 			display: name.replace("_", "")
 		};
 	}
+	var RETRY_MS = 3e4;
 	var multiplierCache = {};
 	function getMultiplier(contract) {
 		const c = multiplierCache[contract];
-		if (c !== void 0) return c === "loading" ? NaN : c;
-		multiplierCache[contract] = "loading";
+		if (typeof c === "number") return c;
+		if (c && (c.loading || Date.now() - c.failedAt < RETRY_MS)) return NaN;
+		multiplierCache[contract] = { loading: true };
+		const fail = () => multiplierCache[contract] = { failedAt: Date.now() };
 		_GM_xmlhttpRequest({
 			method: "GET",
 			url: CONTRACT_API + contract,
+			timeout: 1e4,
 			onload: (r) => {
-				try {
-					multiplierCache[contract] = num(JSON.parse(r.responseText).quanto_multiplier);
-				} catch (e) {
-					delete multiplierCache[contract];
-				}
+				const v = (() => {
+					try {
+						return num(JSON.parse(r.responseText).quanto_multiplier);
+					} catch (e) {
+						return NaN;
+					}
+				})();
+				if (v > 0) multiplierCache[contract] = v;
+				else fail();
 			},
-			onerror: () => delete multiplierCache[contract]
+			onerror: fail,
+			ontimeout: fail
 		});
 		return NaN;
 	}
-	function toCoin(qty, unit, price, ctx) {
+	var isSupportedUnit = (unit, ctx) => !unit || unit === ctx.base || unit === "张";
+	function toCoin(qty, unit, ctx) {
 		if (!unit || unit === ctx.base) return qty;
 		if (unit === "张") return qty * getMultiplier(ctx.name);
-		if (unit === "USDT") return price > 0 ? qty / price : NaN;
 		return NaN;
 	}
 	function readOrderForm() {
@@ -105,7 +118,7 @@
 			result[side] = {
 				entry,
 				entryText,
-				size: toCoin(size, unit, entry, ctx)
+				size: isSupportedUnit(unit, ctx) ? toCoin(size, unit, ctx) : NaN
 			};
 		};
 		document.querySelectorAll("table.position-table tbody tr").forEach((tr) => {
@@ -143,28 +156,27 @@
 			"background:var(--color-cmpt-tag-gray, rgba(128,128,128,.12))",
 			"color:var(--color-text-text-secondary, #8d93a6)"
 		].join(";");
-		const anchor = [...dealbox.children].find((el) => /^可用/.test(el.innerText.trim()));
+		const anchor = [...dealbox.children].find((el) => /^可用/.test(el.textContent.trim()));
 		if (anchor) dealbox.insertBefore(panel, anchor);
 		else qtyInput.closest(".dealbox > *")?.after(panel);
 		return panel;
 	}
+	var esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({
+		"&": "&amp;",
+		"<": "&lt;",
+		">": "&gt;",
+		"\"": "&quot;"
+	})[c]);
+	var row = (left, right, title = "") => `<div style="display:flex;justify-content:space-between;align-items:baseline;gap:6px" title="${esc(title)}">${left}${right}</div>`;
 	function renderLine(label, color, pos, price, qty, digits) {
-		let value;
-		let diff = "";
-		let title = "";
-		if (!Number.isFinite(pos.size) || !Number.isFinite(qty)) value = "换算中…";
-		else {
-			const avg = (pos.entry * pos.size + price * qty) / (pos.size + qty);
-			const pct = (avg - pos.entry) / pos.entry * 100;
-			value = avg.toFixed(digits);
-			diff = `${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%`;
-			title = `原均价 ${pos.entryText}`;
-		}
-		return `<div style="display:flex;justify-content:space-between;align-items:baseline;gap:6px" title="${title}">
-    <span style="color:${color};white-space:nowrap">${label}后均价</span>
-    <span style="text-align:right;white-space:nowrap"><b style="color:var(--color-text-text-primary,inherit)">${value}</b> ${diff}</span>
-  </div>`;
+		const left = `<span style="color:${color};white-space:nowrap">${label}后均价</span>`;
+		if (!Number.isFinite(pos.size) || !Number.isFinite(qty)) return row(left, "<span>换算中…</span>");
+		const avg = (pos.entry * pos.size + price * qty) / (pos.size + qty);
+		const pct = (avg - pos.entry) / pos.entry * 100;
+		return row(left, `<span style="text-align:right;white-space:nowrap"><b style="color:var(--color-text-text-primary,inherit)">${avg.toFixed(digits)}</b> ${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%</span>`, `原均价 ${pos.entryText}`);
 	}
+	var renderNotice = (text) => row(`<span>${esc(text)}</span>`, "");
+	var renderPlaceholder = () => row("<span>&nbsp;</span>", "");
 	var BUY_COLOR = "var(--color-function-trade-buy, #2ebd85)";
 	var SELL_COLOR = "var(--color-function-trade-sell, #f6465d)";
 	var lastKey = "";
@@ -172,16 +184,24 @@
 		hidePanel();
 		lastKey = "";
 	}
+	function render(el, key, html, visible) {
+		if (key === lastKey && el.innerHTML) return;
+		lastKey = key;
+		el.innerHTML = html;
+		el.style.visibility = visible ? "" : "hidden";
+	}
 	function tick() {
 		const ctx = getContract();
 		const form = ctx && readOrderForm();
-		if (!form || !(form.price > 0)) return hide();
+		if (!form || !(form.price > 0) || !(form.qtyLong > 0 || form.qtyShort > 0)) return hide();
+		const el = ensurePanel(form.dealbox, form.qtyInput);
+		el.style.display = "";
+		if (!isSupportedUnit(form.unit, ctx)) return render(el, `unit:${form.unit}`, renderNotice(`数量单位为 ${form.unit} 时不预估均价`), true);
 		const pos = readPositions(ctx);
-		const qtyLong = toCoin(form.qtyLong, form.unit, form.price, ctx);
-		const qtyShort = toCoin(form.qtyShort, form.unit, form.price, ctx);
+		const qtyLong = toCoin(form.qtyLong, form.unit, ctx);
+		const qtyShort = toCoin(form.qtyShort, form.unit, ctx);
 		const showLong = pos.long && form.qtyLong > 0;
 		const showShort = pos.short && form.qtyShort > 0;
-		if (!showLong && !showShort) return hide();
 		const key = JSON.stringify([
 			ctx.name,
 			form.price,
@@ -189,23 +209,35 @@
 			qtyShort,
 			pos
 		]);
-		const el = ensurePanel(form.dealbox, form.qtyInput);
-		el.style.display = "";
-		if (key === lastKey && el.innerHTML) return;
-		lastKey = key;
-		console.debug("[均价预估]", {
+		if (!showLong && !showShort) return render(el, key, renderPlaceholder(), false);
+		const digits = Math.min(Math.max(decimalsOf(form.priceStr), decimalsOf(pos.long?.entryText || ""), decimalsOf(pos.short?.entryText || "")) + 2, 10);
+		const html = (showLong ? renderLine("开多", BUY_COLOR, pos.long, form.price, qtyLong, digits) : "") + (showShort ? renderLine("开空", SELL_COLOR, pos.short, form.price, qtyShort, digits) : "");
+		if (key !== lastKey) console.debug("[均价预估]", {
 			price: form.priceStr,
 			unit: form.unit,
 			qtyLong,
 			qtyShort,
 			pos
 		});
-		const digits = Math.min(Math.max(decimalsOf(form.priceStr), decimalsOf(pos.long?.entryText || ""), decimalsOf(pos.short?.entryText || "")) + 2, 10);
-		el.innerHTML = (showLong ? renderLine("开多", BUY_COLOR, pos.long, form.price, qtyLong, digits) : "") + (showShort ? renderLine("开空", SELL_COLOR, pos.short, form.price, qtyShort, digits) : "");
+		render(el, key, html, true);
+	}
+	var lastError = "";
+	function safeTick() {
+		try {
+			tick();
+		} catch (e) {
+			if (String(e) !== lastError) {
+				lastError = String(e);
+				console.warn("[均价预估] 出错，已隐藏面板", e);
+			}
+			try {
+				hide();
+			} catch (_) {}
+		}
 	}
 	function initAvgPreview() {
-		setInterval(tick, 300);
-		document.addEventListener("input", () => requestAnimationFrame(tick), true);
+		setInterval(safeTick, 300);
+		document.addEventListener("input", () => requestAnimationFrame(safeTick), true);
 	}
 	function initModalFix() {
 		document.addEventListener("click", (e) => {
@@ -220,6 +252,91 @@
 			setTimeout(() => clearInterval(checkModal), 5e3);
 		});
 	}
+	var TOGGLES_ID = "tm-blur-toggles";
+	var STORE_KEY = "blurModules";
+	var MODULES = [
+		{
+			key: "order",
+			label: "开仓"
+		},
+		{
+			key: "positions",
+			label: "仓位"
+		},
+		{
+			key: "assets",
+			label: "资产"
+		}
+	];
+	var TARGETS = {
+		order: {
+			box: ".react-grid-item:has(.dealbox)",
+			inner: "> .h-full > *"
+		},
+		positions: {
+			box: `.react-grid-item:has(#${TOGGLES_ID})`,
+			inner: `.scroll-table-bottom-box > :last-child:not(:has(#${TOGGLES_ID}))`,
+			revealOnSelf: true
+		},
+		assets: {
+			box: ".react-grid-item:has(.asset-container_new)",
+			inner: ".asset-container_new > :not(.rgl-drag-zone):not(.assets-title)"
+		}
+	};
+	function buildCss() {
+		const SHOW = ":is(:hover, :focus-within)";
+		return Object.entries(TARGETS).map(([key, { box, inner, revealOnSelf }]) => {
+			const blurred = `html.tm-blur-${key} ${box} ${inner}`;
+			return `
+${blurred} { filter: blur(6px); transition: filter .15s; }
+${revealOnSelf ? `${blurred}${SHOW}` : `html.tm-blur-${key} ${box}${SHOW} ${inner}`} { filter: none; transition: none; }`;
+		}).join("\n") + `
+#${TOGGLES_ID} { display: flex; align-items: center; gap: 8px; font-size: 12px; white-space: nowrap;
+  color: var(--color-text-text-secondary, #8d93a6); }
+#${TOGGLES_ID} label { display: inline-flex; align-items: center; gap: 3px; cursor: pointer; }
+#${TOGGLES_ID} input { margin: 0; width: 12px; height: 12px; cursor: pointer;
+  accent-color: var(--color-text-text-primary, currentColor); }`;
+	}
+	function loadState() {
+		const saved = _GM_getValue(STORE_KEY, null);
+		return Object.fromEntries(MODULES.map(({ key }) => [key, !!saved?.[key]]));
+	}
+	function applyState(state) {
+		MODULES.forEach(({ key }) => document.documentElement.classList.toggle(`tm-blur-${key}`, state[key]));
+	}
+	function createToggles(state) {
+		const box = document.createElement("div");
+		box.id = TOGGLES_ID;
+		box.innerHTML = "<span>模糊</span>" + MODULES.map(({ key, label }) => `<label><input type="checkbox" data-key="${key}">${label}</label>`).join("");
+		box.querySelectorAll("input").forEach((input) => {
+			input.checked = state[input.dataset.key];
+			input.addEventListener("change", () => {
+				state[input.dataset.key] = input.checked;
+				_GM_setValue(STORE_KEY, state);
+				applyState(state);
+			});
+		});
+		return box;
+	}
+	function findAnchor() {
+		return [...document.querySelectorAll(".mantine-Checkbox-label span")].find((s) => s.textContent.trim() === "仅显示当前市场")?.closest(".mantine-Checkbox-root");
+	}
+	function initPrivacyBlur() {
+		const style = document.createElement("style");
+		style.textContent = buildCss();
+		(document.head || document.documentElement).appendChild(style);
+		const state = loadState();
+		applyState(state);
+		setInterval(() => {
+			try {
+				const anchor = findAnchor();
+				if (!anchor || anchor.previousElementSibling?.id === TOGGLES_ID) return;
+				document.getElementById(TOGGLES_ID)?.remove();
+				anchor.before(createToggles(state));
+			} catch (e) {}
+		}, 500);
+	}
 	initAvgPreview();
 	initModalFix();
+	initPrivacyBlur();
 })();
