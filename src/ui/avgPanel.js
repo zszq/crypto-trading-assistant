@@ -1,4 +1,5 @@
 import { PANEL_ID } from '../config.js';
+import { onCleanup } from '../core/guard.js';
 
 export const getPanel = () => document.getElementById(PANEL_ID);
 
@@ -7,10 +8,14 @@ export function hidePanel() {
   if (panel) panel.style.display = 'none';
 }
 
-export function ensurePanel(dealbox, qtyInput) {
+// 脚本停用时移除面板，页面恢复原样
+onCleanup(() => getPanel()?.remove());
+
+// anchor 是下单区的“可用”行，已在读取阶段校验过存在
+export function ensurePanel(dealbox, anchor) {
   let panel = getPanel();
   // React 重渲染可能把节点挤掉或换掉 dealbox，所以每次校验挂载位置
-  if (panel && dealbox.contains(panel)) return panel;
+  if (panel && panel.parentElement === dealbox && panel.nextElementSibling === anchor) return panel;
   panel?.remove();
   panel = document.createElement('div');
   panel.id = PANEL_ID;
@@ -24,9 +29,7 @@ export function ensurePanel(dealbox, qtyInput) {
     'color:var(--color-text-text-secondary, #8d93a6)',
   ].join(';');
   // 放在“可用”那行之前，也就是数量和滑块下面，下单时视线正好经过
-  const anchor = [...dealbox.children].find((el) => /^可用/.test(el.textContent.trim()));
-  if (anchor) dealbox.insertBefore(panel, anchor);
-  else qtyInput.closest('.dealbox > *')?.after(panel);
+  dealbox.insertBefore(panel, anchor);
   return panel;
 }
 

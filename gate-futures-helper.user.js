@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gate 合约助手
 // @namespace    http://tampermonkey.net/
-// @version      1.5.0
+// @version      1.6.0
 // @author       zl
 // @description  Gate USDT 永续合约：限价下单时预估开仓后的持仓均价
 // @match        https://www.gate.com/*futures/USDT/*
@@ -14,11 +14,192 @@
 
 (function() {
 	"use strict";
-	var PANEL_ID = "tm-avg-preview";
-	var CONTRACT_API = "https://api.gateio.ws/api/v4/futures/usdt/contracts/";
 	var _GM_getValue = (() => typeof GM_getValue != "undefined" ? GM_getValue : void 0)();
 	var _GM_setValue = (() => typeof GM_setValue != "undefined" ? GM_setValue : void 0)();
 	var _GM_xmlhttpRequest = (() => typeof GM_xmlhttpRequest != "undefined" ? GM_xmlhttpRequest : void 0)();
+	var BANNER_ID = "tm-gate-helper-banner";
+	function showBanner(reason) {
+		if (document.getElementById(BANNER_ID)) return;
+		const bar = document.createElement("div");
+		bar.id = BANNER_ID;
+		bar.style.cssText = [
+			"position:fixed",
+			"top:0",
+			"left:0",
+			"right:0",
+			"z-index:2147483647",
+			"display:flex",
+			"align-items:center",
+			"gap:12px",
+			"padding:8px 16px",
+			"background:#d9304f",
+			"color:#fff",
+			"font-size:13px",
+			"line-height:20px",
+			"box-shadow:0 2px 8px rgba(0,0,0,.2)"
+		].join(";");
+		const text = document.createElement("span");
+		text.style.flex = "1";
+		text.textContent = `⚠ Gate 合约助手已停用，未对页面做任何操作。原因：${reason}。页面结构可能已改版，请更新脚本后再使用。`;
+		const close = document.createElement("button");
+		close.textContent = "×";
+		close.title = "关闭提示（脚本仍保持停用）";
+		close.style.cssText = "border:0;background:transparent;color:#fff;font-size:18px;line-height:20px;cursor:pointer;padding:0 4px";
+		close.addEventListener("click", () => bar.remove());
+		bar.append(text, close);
+		document.documentElement.appendChild(bar);
+	}
+	var StructureError = class extends Error {};
+	function expect(cond, message) {
+		if (!cond) throw new StructureError(message);
+		return cond;
+	}
+	var GRACE_MS = 3e3;
+	var disabled = false;
+	var cleanups = [];
+	var failingSince = {};
+	function onCleanup(fn) {
+		cleanups.push(fn);
+	}
+	function disable(reason) {
+		if (disabled) return;
+		disabled = true;
+		console.error("[Gate 合约助手] 已停用：", reason);
+		cleanups.reverse().forEach((fn) => {
+			try {
+				fn();
+			} catch (e) {}
+		});
+		showBanner(reason);
+	}
+	function run(name, fn, onFail) {
+		if (disabled) return;
+		try {
+			fn();
+			delete failingSince[name];
+		} catch (e) {
+			if (!(e instanceof StructureError)) return disable(`脚本异常：${e?.message || e}`);
+			try {
+				onFail?.();
+			} catch (_) {}
+			failingSince[name] ??= Date.now();
+			if (Date.now() - failingSince[name] >= GRACE_MS) disable(e.message);
+		}
+	}
+	function every(name, fn, ms, onFail) {
+		const id = setInterval(() => run(name, fn, onFail), ms);
+		onCleanup(() => clearInterval(id));
+	}
+	function listen(target, type, handler, options) {
+		target.addEventListener(type, handler, options);
+		onCleanup(() => target.removeEventListener(type, handler, options));
+	}
+	function addStyle(css) {
+		const style = document.createElement("style");
+		style.textContent = css;
+		(document.head || document.documentElement).appendChild(style);
+		onCleanup(() => style.remove());
+	}
+	var TOGGLES_ID = "tm-blur-toggles";
+	var STORE_KEY = "blurModules";
+	var MODULES = [
+		{
+			key: "order",
+			label: "开仓"
+		},
+		{
+			key: "positions",
+			label: "仓位"
+		},
+		{
+			key: "assets",
+			label: "资产"
+		}
+	];
+	var ORDER = ".react-grid-item:has(.dealbox)";
+	var POSITIONS = ".react-grid-item:has(.scroll-table-bottom-box)";
+	var ASSETS = ".react-grid-item:has(.asset-container_new)";
+	var TARGETS = {
+		order: {
+			box: ORDER,
+			inner: "> .h-full > *"
+		},
+		positions: {
+			box: POSITIONS,
+			inner: ".scroll-table-bottom-box > :last-child:not(:first-child)",
+			revealOnSelf: true
+		},
+		assets: {
+			box: ASSETS,
+			inner: ".asset-container_new > :not(.rgl-drag-zone):not(.assets-title)"
+		}
+	};
+	function verifyBlurStructure() {
+		const boxes = document.querySelectorAll(".scroll-table-bottom-box");
+		expect(boxes.length === 1, `仓位区 .scroll-table-bottom-box 应有 1 个，实际 ${boxes.length} 个`);
+		const bottom = boxes[0];
+		expect(bottom.closest(".react-grid-item"), "仓位区所在模块 .react-grid-item 未找到");
+		expect(bottom.children.length >= 2, "仓位区缺少数据区");
+		const active = [...bottom.firstElementChild.firstElementChild?.children || []].filter((t) => t.classList.contains("text-c-text-1"));
+		expect(active.length === 1, `仓位区选中的标签应有 1 个，实际 ${active.length} 个`);
+		const onPositionsTab = /^仓位(\(\d+\))?$/.test(active[0].textContent.trim());
+		const anchor = [...bottom.firstElementChild.querySelectorAll(".mantine-Checkbox-label span")].find((s) => s.textContent.trim() === "仅显示当前市场")?.closest(".mantine-Checkbox-root") || null;
+		if (onPositionsTab) expect(anchor, "“仓位”标签下“仅显示当前市场”复选框未找到");
+		expect(document.querySelector(`${ORDER} ${TARGETS.order.inner}`), "开仓模块内容区（.react-grid-item > .h-full）未找到");
+		expect(document.querySelector(".asset-container_new > .assets-title"), "资产模块标题 .assets-title 未找到");
+		expect(document.querySelector(`${ASSETS} ${TARGETS.assets.inner}`), "资产模块内容区未找到");
+		return anchor;
+	}
+	function buildCss() {
+		const SHOW = ":is(:hover, :focus-within)";
+		return Object.entries(TARGETS).map(([key, { box, inner, revealOnSelf }]) => {
+			const blurred = `html.tm-blur-${key} ${box} ${inner}`;
+			return `
+${blurred} { filter: blur(6px); transition: filter .15s; }
+${revealOnSelf ? `${blurred}${SHOW}` : `html.tm-blur-${key} ${box}${SHOW} ${inner}`} { filter: none; transition: none; }`;
+		}).join("\n") + `
+#${TOGGLES_ID} { display: flex; align-items: center; gap: 8px; font-size: 12px; white-space: nowrap;
+  color: var(--color-text-text-secondary, #8d93a6); }
+#${TOGGLES_ID} label { display: inline-flex; align-items: center; gap: 3px; cursor: pointer; }
+#${TOGGLES_ID} input { margin: 0; width: 12px; height: 12px; cursor: pointer;
+  accent-color: var(--color-text-text-primary, currentColor); }`;
+	}
+	function loadState() {
+		const saved = _GM_getValue(STORE_KEY, null);
+		return Object.fromEntries(MODULES.map(({ key }) => [key, !!saved?.[key]]));
+	}
+	function applyState(state) {
+		MODULES.forEach(({ key }) => document.documentElement.classList.toggle(`tm-blur-${key}`, state[key]));
+	}
+	function createToggles(state) {
+		const box = document.createElement("div");
+		box.id = TOGGLES_ID;
+		box.innerHTML = "<span>模糊</span>" + MODULES.map(({ key, label }) => `<label><input type="checkbox" data-key="${key}">${label}</label>`).join("");
+		box.querySelectorAll("input").forEach((input) => {
+			input.checked = state[input.dataset.key];
+			input.addEventListener("change", () => {
+				state[input.dataset.key] = input.checked;
+				_GM_setValue(STORE_KEY, state);
+				applyState(state);
+			});
+		});
+		return box;
+	}
+	function initPrivacyBlur() {
+		addStyle(buildCss());
+		const state = loadState();
+		applyState(state);
+		onCleanup(() => MODULES.forEach(({ key }) => document.documentElement.classList.remove(`tm-blur-${key}`)));
+		onCleanup(() => document.getElementById(TOGGLES_ID)?.remove());
+		every("privacyBlur", () => {
+			const anchor = verifyBlurStructure();
+			if (!anchor || anchor.previousElementSibling?.id === TOGGLES_ID) return;
+			document.getElementById(TOGGLES_ID)?.remove();
+			anchor.before(createToggles(state));
+		}, 500);
+	}
+	var PANEL_ID = "tm-avg-preview";
+	var CONTRACT_API = "https://api.gateio.ws/api/v4/futures/usdt/contracts/";
 	var num = (s) => {
 		const v = parseFloat(String(s ?? "").replace(/,/g, ""));
 		return Number.isFinite(v) ? v : NaN;
@@ -69,38 +250,57 @@
 		return NaN;
 	}
 	function readOrderForm() {
-		const dealbox = document.querySelector(".dealbox");
-		if (!dealbox) return null;
-		const qtyInput = dealbox.querySelector("input[name=\"f_order\"]");
-		if (!qtyInput) return null;
-		const before = [...dealbox.querySelectorAll("input")].filter((i) => i !== qtyInput && i.type !== "checkbox" && i.offsetParent && i.compareDocumentPosition(qtyInput) & Node.DOCUMENT_POSITION_FOLLOWING);
-		const priceInput = before[before.length - 1];
-		if (!priceInput) return {
-			dealbox,
-			qtyInput
-		};
+		const boxes = document.querySelectorAll(".dealbox");
+		expect(boxes.length === 1, `下单区 .dealbox 应有 1 个，实际 ${boxes.length} 个`);
+		const dealbox = boxes[0];
+		const qtyInputs = dealbox.querySelectorAll("input[name=\"f_order\"]");
+		expect(qtyInputs.length === 1, `数量输入框 input[name="f_order"] 应有 1 个，实际 ${qtyInputs.length} 个`);
+		const qtyInput = qtyInputs[0];
+		const unitEl = expect(qtyInput.closest("label")?.querySelector("span.truncate"), "数量单位 span.truncate 未找到");
+		const wrapper = expect(qtyInput.closest(".mantine-InputWrapper-root"), "数量输入框外层 .mantine-InputWrapper-root 未找到");
+		const anchor = expect([...dealbox.children].find((el) => /^可用/.test(el.textContent.trim())), "下单区“可用”行未找到");
+		const orderModule = expect(dealbox.closest(".react-grid-item"), "下单区所在模块 .react-grid-item 未找到");
+		const openTab = expect(orderModule.querySelector("#tab-long[role=\"tab\"]"), "“开仓”标签 #tab-long 未找到");
+		expect(orderModule.querySelector("#tab-short[role=\"tab\"]"), "“平仓”标签 #tab-short 未找到");
+		const isOpen = openTab.getAttribute("aria-selected") === "true";
 		const base = {
 			dealbox,
 			qtyInput,
-			priceStr: priceInput.value,
-			price: num(priceInput.value)
+			anchor,
+			isOpen,
+			price: NaN,
+			priceStr: "",
+			qtyLong: NaN,
+			qtyShort: NaN,
+			unit: ""
 		};
-		if (qtyInput.value.trim().endsWith("%")) {
-			const hint = qtyInput.closest(".mantine-InputWrapper-root")?.querySelector(".mantine-InputWrapper-error");
+		if (!isOpen) return base;
+		const before = [...dealbox.querySelectorAll("input")].filter((i) => i !== qtyInput && i.type !== "checkbox" && i.offsetParent && i.compareDocumentPosition(qtyInput) & Node.DOCUMENT_POSITION_FOLLOWING);
+		const priceInput = before[before.length - 1];
+		if (!priceInput) return base;
+		base.priceStr = priceInput.value;
+		base.price = num(priceInput.value);
+		if (!(base.price > 0)) return base;
+		const raw = qtyInput.value.trim();
+		if (raw.endsWith("%")) {
+			if (!(num(raw) > 0)) return base;
+			const hint = expect(wrapper.querySelector(".mantine-InputWrapper-error"), "百分比数量提示行未找到");
+			const add = expect(hint.querySelector(".font-add-color"), "百分比提示中的开多数量 .font-add-color 未找到");
+			const dec = expect(hint.querySelector(".font-dec-color"), "百分比提示中的开空数量 .font-dec-color 未找到");
+			const unit = expect((hint.textContent.trim().match(/\S+$/) || [""])[0], "百分比提示中的单位未找到");
 			return {
 				...base,
-				qtyLong: num(hint?.querySelector(".font-add-color")?.textContent),
-				qtyShort: num(hint?.querySelector(".font-dec-color")?.textContent),
-				unit: (hint?.textContent.trim().match(/\S+$/) || [""])[0]
+				qtyLong: num(add.textContent),
+				qtyShort: num(dec.textContent),
+				unit
 			};
 		}
-		const unitEl = qtyInput.closest("label")?.querySelector("span.truncate");
-		const qty = num(qtyInput.value);
+		const qty = num(raw);
 		return {
 			...base,
 			qtyLong: qty,
 			qtyShort: qty,
-			unit: unitEl ? unitEl.textContent.trim() : ""
+			unit: unitEl.textContent.trim()
 		};
 	}
 	var sideOf = (texts) => texts.includes("多") ? "long" : texts.includes("空") ? "short" : null;
@@ -109,41 +309,90 @@
 			long: null,
 			short: null
 		};
-		const add = (name, side, sizeText, entryText) => {
-			if (name !== ctx.display || !side) return;
+		const add = (where, name, side, sizeText, entryText) => {
 			const entry = num(entryText);
 			const size = Math.abs(num(sizeText));
+			expect(name, `${where}中合约名未找到`);
+			expect(side, `${where}中多/空方向未找到`);
+			expect(entry > 0, `${where}中开仓均价无法解析：“${entryText}”`);
+			expect(size > 0, `${where}中数量无法解析：“${sizeText}”`);
+			if (name !== ctx.display) return;
 			const unit = (sizeText.match(/[^\d.,\s-]+$/) || [""])[0];
-			if (!(entry > 0) || !(size > 0)) return;
 			result[side] = {
 				entry,
 				entryText,
 				size: isSupportedUnit(unit, ctx) ? toCoin(size, unit, ctx) : NaN
 			};
 		};
-		document.querySelectorAll("table.position-table tbody tr").forEach((tr) => {
-			const badges = [...tr.querySelectorAll(".mantine-Badge-label")].map((b) => b.textContent.trim());
-			add(tr.querySelector("td span.text-b10")?.textContent.replace(/\s/g, ""), sideOf(badges), tr.querySelector("td.size")?.textContent.trim() || "", tr.querySelector("td.entry_price")?.textContent.trim() || "");
+		document.querySelectorAll("table.position-table").forEach((table) => {
+			expect(table.querySelector("th.size") && table.querySelector("th.entry_price"), "仓位列表表头“数量/开仓均价”列未找到");
+			table.querySelectorAll("tbody tr").forEach((tr) => {
+				if (tr.cells.length <= 1) return;
+				const badges = [...tr.querySelectorAll(".mantine-Badge-label")].map((b) => b.textContent.trim());
+				add("仓位列表", tr.querySelector("td span.text-b10")?.textContent.replace(/\s/g, ""), sideOf(badges), expect(tr.querySelector("td.size"), "仓位列表中数量单元格 td.size 未找到").textContent.trim(), expect(tr.querySelector("td.entry_price"), "仓位列表中开仓均价单元格 td.entry_price 未找到").textContent.trim());
+			});
 		});
 		document.querySelectorAll("span.underline-dashed").forEach((label) => {
 			if (label.textContent.trim() !== "开仓均价" || label.closest("table")) return;
+			if (!label.closest(".scroll-table-bottom-box")) return;
 			let card = label.parentElement;
 			while (card && !/^[A-Z0-9]+USDT\n/.test(card.innerText)) card = card.parentElement;
-			if (!card) return;
+			expect(card, "仓位卡片未找到（以合约名开头的容器）");
 			const lines = card.innerText.split("\n").map((s) => s.trim());
-			const after = (key) => lines[lines.indexOf(key) + 1] || "";
-			add(lines[0], sideOf(lines.slice(0, lines.indexOf("数量"))), after("数量"), after("开仓均价"));
+			const qtyIdx = lines.indexOf("数量");
+			expect(qtyIdx > 0, "仓位卡片中“数量”标签未找到");
+			add("仓位卡片", lines[0], sideOf(lines.slice(0, qtyIdx)), lines[qtyIdx + 1] || "", lines[lines.indexOf("开仓均价") + 1] || "");
 		});
 		return result;
+	}
+	var STARTUP_TIMEOUT_MS = 2e4;
+	var POLL_MS = 500;
+	function isLoggedOut() {
+		const dealbox = document.querySelector(".dealbox");
+		return !!dealbox && [...dealbox.querySelectorAll("button")].some((b) => /^(登录|注册)$/.test(b.textContent.trim()));
+	}
+	function verifyStructure() {
+		const ctx = expect(getContract(), "无法从地址栏解析合约名");
+		readOrderForm();
+		readPositions(ctx);
+		verifyBlurStructure();
+	}
+	function startWhenReady(features) {
+		const deadline = Date.now() + STARTUP_TIMEOUT_MS;
+		const id = setInterval(() => {
+			if (isLoggedOut()) {
+				clearInterval(id);
+				console.info("[Gate 合约助手] 未登录，脚本不启用");
+				return;
+			}
+			try {
+				verifyStructure();
+			} catch (e) {
+				if (!(e instanceof StructureError)) {
+					clearInterval(id);
+					return disable(`脚本异常：${e?.message || e}`);
+				}
+				if (Date.now() < deadline) return;
+				clearInterval(id);
+				return disable(e.message);
+			}
+			clearInterval(id);
+			try {
+				features.forEach((init) => init());
+			} catch (e) {
+				disable(`启动失败：${e?.message || e}`);
+			}
+		}, POLL_MS);
 	}
 	var getPanel = () => document.getElementById(PANEL_ID);
 	function hidePanel() {
 		const panel = getPanel();
 		if (panel) panel.style.display = "none";
 	}
-	function ensurePanel(dealbox, qtyInput) {
+	onCleanup(() => getPanel()?.remove());
+	function ensurePanel(dealbox, anchor) {
 		let panel = getPanel();
-		if (panel && dealbox.contains(panel)) return panel;
+		if (panel && panel.parentElement === dealbox && panel.nextElementSibling === anchor) return panel;
 		panel?.remove();
 		panel = document.createElement("div");
 		panel.id = PANEL_ID;
@@ -156,9 +405,7 @@
 			"background:var(--color-cmpt-tag-gray, rgba(128,128,128,.12))",
 			"color:var(--color-text-text-secondary, #8d93a6)"
 		].join(";");
-		const anchor = [...dealbox.children].find((el) => /^可用/.test(el.textContent.trim()));
-		if (anchor) dealbox.insertBefore(panel, anchor);
-		else qtyInput.closest(".dealbox > *")?.after(panel);
+		dealbox.insertBefore(panel, anchor);
 		return panel;
 	}
 	var esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({
@@ -191,12 +438,14 @@
 		el.style.visibility = visible ? "" : "hidden";
 	}
 	function tick() {
-		const ctx = getContract();
-		const form = ctx && readOrderForm();
-		if (!form || !(form.price > 0) || !(form.qtyLong > 0 || form.qtyShort > 0)) return hide();
-		const el = ensurePanel(form.dealbox, form.qtyInput);
-		el.style.display = "";
-		if (!isSupportedUnit(form.unit, ctx)) return render(el, `unit:${form.unit}`, renderNotice(`数量单位为 ${form.unit} 时不预估均价`), true);
+		const ctx = expect(getContract(), "无法从地址栏解析合约名");
+		const form = readOrderForm();
+		if (!form.isOpen || !(form.price > 0) || !(form.qtyLong > 0 || form.qtyShort > 0)) return hide();
+		if (!isSupportedUnit(form.unit, ctx)) {
+			const el = ensurePanel(form.dealbox, form.anchor);
+			el.style.display = "";
+			return render(el, `unit:${form.unit}`, renderNotice(`数量单位为 ${form.unit} 时不预估均价`), true);
+		}
 		const pos = readPositions(ctx);
 		const qtyLong = toCoin(form.qtyLong, form.unit, ctx);
 		const qtyShort = toCoin(form.qtyShort, form.unit, ctx);
@@ -209,6 +458,8 @@
 			qtyShort,
 			pos
 		]);
+		const el = ensurePanel(form.dealbox, form.anchor);
+		el.style.display = "";
 		if (!showLong && !showShort) return render(el, key, renderPlaceholder(), false);
 		const digits = Math.min(Math.max(decimalsOf(form.priceStr), decimalsOf(pos.long?.entryText || ""), decimalsOf(pos.short?.entryText || "")) + 2, 10);
 		const html = (showLong ? renderLine("开多", BUY_COLOR, pos.long, form.price, qtyLong, digits) : "") + (showShort ? renderLine("开空", SELL_COLOR, pos.short, form.price, qtyShort, digits) : "");
@@ -221,122 +472,9 @@
 		});
 		render(el, key, html, true);
 	}
-	var lastError = "";
-	function safeTick() {
-		try {
-			tick();
-		} catch (e) {
-			if (String(e) !== lastError) {
-				lastError = String(e);
-				console.warn("[均价预估] 出错，已隐藏面板", e);
-			}
-			try {
-				hide();
-			} catch (_) {}
-		}
-	}
 	function initAvgPreview() {
-		setInterval(safeTick, 300);
-		document.addEventListener("input", () => requestAnimationFrame(safeTick), true);
+		every("avgPreview", tick, 300, hide);
+		listen(document, "input", () => requestAnimationFrame(() => run("avgPreview", tick, hide)), true);
 	}
-	function initModalFix() {
-		document.addEventListener("click", (e) => {
-			if (!e.target.closest("button[label=\"市价\"]")) return;
-			const checkModal = setInterval(() => {
-				const modal = document.querySelector(".mantine-GateModal-inner");
-				if (modal) {
-					modal.style.justifyContent = "unset";
-					clearInterval(checkModal);
-				}
-			}, 100);
-			setTimeout(() => clearInterval(checkModal), 5e3);
-		});
-	}
-	var TOGGLES_ID = "tm-blur-toggles";
-	var STORE_KEY = "blurModules";
-	var MODULES = [
-		{
-			key: "order",
-			label: "开仓"
-		},
-		{
-			key: "positions",
-			label: "仓位"
-		},
-		{
-			key: "assets",
-			label: "资产"
-		}
-	];
-	var TARGETS = {
-		order: {
-			box: ".react-grid-item:has(.dealbox)",
-			inner: "> .h-full > *"
-		},
-		positions: {
-			box: `.react-grid-item:has(#${TOGGLES_ID})`,
-			inner: `.scroll-table-bottom-box > :last-child:not(:has(#${TOGGLES_ID}))`,
-			revealOnSelf: true
-		},
-		assets: {
-			box: ".react-grid-item:has(.asset-container_new)",
-			inner: ".asset-container_new > :not(.rgl-drag-zone):not(.assets-title)"
-		}
-	};
-	function buildCss() {
-		const SHOW = ":is(:hover, :focus-within)";
-		return Object.entries(TARGETS).map(([key, { box, inner, revealOnSelf }]) => {
-			const blurred = `html.tm-blur-${key} ${box} ${inner}`;
-			return `
-${blurred} { filter: blur(6px); transition: filter .15s; }
-${revealOnSelf ? `${blurred}${SHOW}` : `html.tm-blur-${key} ${box}${SHOW} ${inner}`} { filter: none; transition: none; }`;
-		}).join("\n") + `
-#${TOGGLES_ID} { display: flex; align-items: center; gap: 8px; font-size: 12px; white-space: nowrap;
-  color: var(--color-text-text-secondary, #8d93a6); }
-#${TOGGLES_ID} label { display: inline-flex; align-items: center; gap: 3px; cursor: pointer; }
-#${TOGGLES_ID} input { margin: 0; width: 12px; height: 12px; cursor: pointer;
-  accent-color: var(--color-text-text-primary, currentColor); }`;
-	}
-	function loadState() {
-		const saved = _GM_getValue(STORE_KEY, null);
-		return Object.fromEntries(MODULES.map(({ key }) => [key, !!saved?.[key]]));
-	}
-	function applyState(state) {
-		MODULES.forEach(({ key }) => document.documentElement.classList.toggle(`tm-blur-${key}`, state[key]));
-	}
-	function createToggles(state) {
-		const box = document.createElement("div");
-		box.id = TOGGLES_ID;
-		box.innerHTML = "<span>模糊</span>" + MODULES.map(({ key, label }) => `<label><input type="checkbox" data-key="${key}">${label}</label>`).join("");
-		box.querySelectorAll("input").forEach((input) => {
-			input.checked = state[input.dataset.key];
-			input.addEventListener("change", () => {
-				state[input.dataset.key] = input.checked;
-				_GM_setValue(STORE_KEY, state);
-				applyState(state);
-			});
-		});
-		return box;
-	}
-	function findAnchor() {
-		return [...document.querySelectorAll(".mantine-Checkbox-label span")].find((s) => s.textContent.trim() === "仅显示当前市场")?.closest(".mantine-Checkbox-root");
-	}
-	function initPrivacyBlur() {
-		const style = document.createElement("style");
-		style.textContent = buildCss();
-		(document.head || document.documentElement).appendChild(style);
-		const state = loadState();
-		applyState(state);
-		setInterval(() => {
-			try {
-				const anchor = findAnchor();
-				if (!anchor || anchor.previousElementSibling?.id === TOGGLES_ID) return;
-				document.getElementById(TOGGLES_ID)?.remove();
-				anchor.before(createToggles(state));
-			} catch (e) {}
-		}, 500);
-	}
-	initAvgPreview();
-	initModalFix();
-	initPrivacyBlur();
+	startWhenReady([initAvgPreview, initPrivacyBlur]);
 })();

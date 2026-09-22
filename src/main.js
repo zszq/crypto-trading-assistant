@@ -1,7 +1,5 @@
+import { startWhenReady } from './core/startup.js';
 import { initAvgPreview } from './features/avgPreview.js';
-import { initModalFix } from './features/modalFix.js';
 import { initPrivacyBlur } from './features/privacyBlur.js';
 
-initAvgPreview();
-initModalFix();
-initPrivacyBlur();
+startWhenReady([initAvgPreview, initPrivacyBlur]);

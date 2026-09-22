@@ -1,4 +1,5 @@
 import { TICK_MS } from '../config.js';
+import { every, expect, listen, run } from '../core/guard.js';
 import { getContract, isSupportedUnit, toCoin } from '../gate/contract.js';
 import { readOrderForm } from '../gate/orderForm.js';
 import { readPositions } from '../gate/positions.js';
@@ -23,18 +24,19 @@ function render(el, key, html, visible) {
   el.style.visibility = visible ? '' : 'hidden';
 }
 
+// 先完整读取并校验页面结构，全部通过后才写 DOM：
+// 结构不对应时在读取阶段就抛错，保证不会基于读错的数据渲染任何东西
 function tick() {
-  const ctx = getContract();
-  const form = ctx && readOrderForm();
-  // 面板是否占位只由用户输入决定（有价格且填了数量），不受仓位数据刷新影响，
+  const ctx = expect(getContract(), '无法从地址栏解析合约名');
+  const form = readOrderForm();
+  // 面板是否占位只由用户输入决定（开仓标签、有价格且填了数量），不受仓位数据刷新影响，
   // 这样成交/平仓导致仓位变化时，按钮不会在点击瞬间移动。
   // 没填数量时直接返回，不读仓位区，空闲时几乎没有开销
-  if (!form || !(form.price > 0) || !(form.qtyLong > 0 || form.qtyShort > 0)) return hide();
-
-  const el = ensurePanel(form.dealbox, form.qtyInput);
-  el.style.display = '';
+  if (!form.isOpen || !(form.price > 0) || !(form.qtyLong > 0 || form.qtyShort > 0)) return hide();
 
   if (!isSupportedUnit(form.unit, ctx)) {
+    const el = ensurePanel(form.dealbox, form.anchor);
+    el.style.display = '';
     return render(el, `unit:${form.unit}`, renderNotice(`数量单位为 ${form.unit} 时不预估均价`), true);
   }
 
@@ -45,8 +47,11 @@ function tick() {
   // 只显示已有仓位那个方向：没有仓位时“开仓后均价”就是委托价本身，没有信息量
   const showLong = pos.long && form.qtyLong > 0;
   const showShort = pos.short && form.qtyShort > 0;
-
   const key = JSON.stringify([ctx.name, form.price, qtyLong, qtyShort, pos]);
+
+  // 以下开始写 DOM
+  const el = ensurePanel(form.dealbox, form.anchor);
+  el.style.display = '';
   if (!showLong && !showShort) return render(el, key, renderPlaceholder(), false);
 
   // 均价多给 2 位小数，避免小额加仓时看不出变化
@@ -64,26 +69,9 @@ function tick() {
   render(el, key, html, true);
 }
 
-// 脚本自身出错不能影响页面：吞掉异常并隐藏面板，同一错误只打印一次，避免每 300ms 刷屏
-let lastError = '';
-function safeTick() {
-  try {
-    tick();
-  } catch (e) {
-    if (String(e) !== lastError) {
-      lastError = String(e);
-      console.warn('[均价预估] 出错，已隐藏面板', e);
-    }
-    try {
-      hide();
-    } catch (_) {
-      // 隐藏失败也不再抛出
-    }
-  }
-}
-
 export function initAvgPreview() {
-  setInterval(safeTick, TICK_MS);
+  // 结构暂时不对应（宽限期内）时，面板回到隐藏状态，不展示可能读错的数据
+  every('avgPreview', tick, TICK_MS, hide);
   // 手动输入时立即刷新，不等下一次轮询；放到下一帧再读，确保 React 已经处理完这次输入
-  document.addEventListener('input', () => requestAnimationFrame(safeTick), true);
+  listen(document, 'input', () => requestAnimationFrame(() => run('avgPreview', tick, hide)), true);
 }
