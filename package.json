@@ -1,0 +1,15 @@
+{
+  "name": "gate-futures-helper",
+  "version": "1.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build && cp dist/gate-futures-helper.user.js gate-futures-helper.user.js",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "vite": "^8.0.14",
+    "vite-plugin-monkey": "^8.0.5"
+  }
+}
