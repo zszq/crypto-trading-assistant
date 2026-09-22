@@ -25,6 +25,7 @@ Gate USDT 永续合约页面的 Tampermonkey 脚本，基于 Vite + vite-plugin-
 
 - 委托价：`.dealbox` 里数量框之前、离它最近的可见输入框。
 - 数量：`input[name="f_order"]`，单位取自同一个 label 里的 `span.truncate`。
+- 百分比数量：用滑块下单时数量框显示 `25%`，真实数量取自数量框下方的提示 `≈ 190,638 / 184,885 WIF`，绿色（`.font-add-color`）是开多数量，红色（`.font-dec-color`）是开空数量，两边分别计算。普通模式下这一行显示的是 USDT 成本，不读取。
 - 仓位：同时支持“列表”视图（`table.position-table`）和“详情”卡片视图（按“数量”“开仓均价”标签取下一行的值）。
 
 页面是 React 渲染，滑块等程序化修改不会触发 input 事件，所以每 300ms 轮询一次（结果不变时不重绘），手动输入时额外立即刷新。

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gate 合约助手
 // @namespace    http://tampermonkey.net/
-// @version      1.1.0
+// @version      1.2.0
 // @author       zl
 // @description  Gate USDT 永续合约：限价下单时预估开仓后的持仓均价
 // @match        https://www.gate.com/*futures/USDT/*
@@ -66,13 +66,27 @@
 			dealbox,
 			qtyInput
 		};
-		const unitEl = qtyInput.closest("label")?.querySelector("span.truncate");
-		return {
+		const base = {
 			dealbox,
 			qtyInput,
 			priceStr: priceInput.value,
-			price: num(priceInput.value),
-			qty: num(qtyInput.value),
+			price: num(priceInput.value)
+		};
+		if (qtyInput.value.trim().endsWith("%")) {
+			const hint = qtyInput.closest(".mantine-InputWrapper-root")?.querySelector(".mantine-InputWrapper-error");
+			return {
+				...base,
+				qtyLong: num(hint?.querySelector(".font-add-color")?.textContent),
+				qtyShort: num(hint?.querySelector(".font-dec-color")?.textContent),
+				unit: (hint?.textContent.trim().match(/\S+$/) || [""])[0]
+			};
+		}
+		const unitEl = qtyInput.closest("label")?.querySelector("span.truncate");
+		const qty = num(qtyInput.value);
+		return {
+			...base,
+			qtyLong: qty,
+			qtyShort: qty,
 			unit: unitEl ? unitEl.textContent.trim() : ""
 		};
 	}
@@ -138,7 +152,7 @@
 		let value;
 		let diff = "";
 		let title = "";
-		if (!Number.isFinite(pos.size)) value = "换算中…";
+		if (!Number.isFinite(pos.size) || !Number.isFinite(qty)) value = "换算中…";
 		else {
 			const avg = (pos.entry * pos.size + price * qty) / (pos.size + qty);
 			const pct = (avg - pos.entry) / pos.entry * 100;
@@ -161,15 +175,18 @@
 	function tick() {
 		const ctx = getContract();
 		const form = ctx && readOrderForm();
-		if (!form || !(form.price > 0) || !(form.qty > 0)) return hide();
-		const qty = toCoin(form.qty, form.unit, form.price, ctx);
+		if (!form || !(form.price > 0)) return hide();
 		const pos = readPositions(ctx);
-		if (!pos.long && !pos.short) return hide();
+		const qtyLong = toCoin(form.qtyLong, form.unit, form.price, ctx);
+		const qtyShort = toCoin(form.qtyShort, form.unit, form.price, ctx);
+		const showLong = pos.long && form.qtyLong > 0;
+		const showShort = pos.short && form.qtyShort > 0;
+		if (!showLong && !showShort) return hide();
 		const key = JSON.stringify([
 			ctx.name,
 			form.price,
-			qty,
-			form.unit,
+			qtyLong,
+			qtyShort,
 			pos
 		]);
 		const el = ensurePanel(form.dealbox, form.qtyInput);
@@ -178,17 +195,13 @@
 		lastKey = key;
 		console.debug("[均价预估]", {
 			price: form.priceStr,
-			qty: form.qty,
 			unit: form.unit,
-			qtyCoin: qty,
+			qtyLong,
+			qtyShort,
 			pos
 		});
-		if (!Number.isFinite(qty)) {
-			el.innerHTML = `单位 ${form.unit} 暂无法换算`;
-			return;
-		}
 		const digits = Math.min(Math.max(decimalsOf(form.priceStr), decimalsOf(pos.long?.entryText || ""), decimalsOf(pos.short?.entryText || "")) + 2, 10);
-		el.innerHTML = (pos.long ? renderLine("开多", BUY_COLOR, pos.long, form.price, qty, digits) : "") + (pos.short ? renderLine("开空", SELL_COLOR, pos.short, form.price, qty, digits) : "");
+		el.innerHTML = (showLong ? renderLine("开多", BUY_COLOR, pos.long, form.price, qtyLong, digits) : "") + (showShort ? renderLine("开空", SELL_COLOR, pos.short, form.price, qtyShort, digits) : "");
 	}
 	function initAvgPreview() {
 		setInterval(tick, 300);

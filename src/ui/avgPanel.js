@@ -34,7 +34,8 @@ export function renderLine(label, color, pos, price, qty, digits) {
   let value;
   let diff = '';
   let title = '';
-  if (!Number.isFinite(pos.size)) {
+  // “张”要等合约乘数接口返回；未知单位会一直停在这里
+  if (!Number.isFinite(pos.size) || !Number.isFinite(qty)) {
     value = '换算中…';
   } else {
     const avg = (pos.entry * pos.size + price * qty) / (pos.size + qty);

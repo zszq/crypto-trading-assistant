@@ -18,34 +18,33 @@ function hide() {
 function tick() {
   const ctx = getContract();
   const form = ctx && readOrderForm();
-  if (!form || !(form.price > 0) || !(form.qty > 0)) return hide();
+  if (!form || !(form.price > 0)) return hide();
 
-  const qty = toCoin(form.qty, form.unit, form.price, ctx);
   const pos = readPositions(ctx);
-  // 没有仓位时“开仓后均价”就是委托价本身，显示出来没有信息量
-  if (!pos.long && !pos.short) return hide();
+  // 百分比模式下多空数量不同，所以按方向各自换算
+  const qtyLong = toCoin(form.qtyLong, form.unit, form.price, ctx);
+  const qtyShort = toCoin(form.qtyShort, form.unit, form.price, ctx);
+  // 只显示已有仓位那个方向：没有仓位时“开仓后均价”就是委托价本身，没有信息量
+  const showLong = pos.long && form.qtyLong > 0;
+  const showShort = pos.short && form.qtyShort > 0;
+  if (!showLong && !showShort) return hide();
 
-  const key = JSON.stringify([ctx.name, form.price, qty, form.unit, pos]);
+  const key = JSON.stringify([ctx.name, form.price, qtyLong, qtyShort, pos]);
   const el = ensurePanel(form.dealbox, form.qtyInput);
   el.style.display = '';
   if (key === lastKey && el.innerHTML) return;
   lastKey = key;
   // 页面结构随 Gate 改版会变，出问题时在控制台看实际读到的值最快定位
-  console.debug('[均价预估]', { price: form.priceStr, qty: form.qty, unit: form.unit, qtyCoin: qty, pos });
+  console.debug('[均价预估]', { price: form.priceStr, unit: form.unit, qtyLong, qtyShort, pos });
 
-  if (!Number.isFinite(qty)) {
-    el.innerHTML = `单位 ${form.unit} 暂无法换算`;
-    return;
-  }
   // 均价多给 2 位小数，避免小额加仓时看不出变化
   const digits = Math.min(
     Math.max(decimalsOf(form.priceStr), decimalsOf(pos.long?.entryText || ''), decimalsOf(pos.short?.entryText || '')) + 2,
     10
   );
-  // 只显示已有仓位那个方向，另一方向开仓均价就是委托价，不必展示
   el.innerHTML =
-    (pos.long ? renderLine('开多', BUY_COLOR, pos.long, form.price, qty, digits) : '') +
-    (pos.short ? renderLine('开空', SELL_COLOR, pos.short, form.price, qty, digits) : '');
+    (showLong ? renderLine('开多', BUY_COLOR, pos.long, form.price, qtyLong, digits) : '') +
+    (showShort ? renderLine('开空', SELL_COLOR, pos.short, form.price, qtyShort, digits) : '');
 }
 
 export function initAvgPreview() {
