@@ -50,6 +50,3 @@ export function renderLine(label, color, pos, price, qty, digits) {
 }
 
 export const renderNotice = (text) => row(`<span>${esc(text)}</span>`, '');
-
-// 占位行：没有仓位时不显示内容，但保留一行高度，避免面板出现/消失时把下单按钮顶上顶下
-export const renderPlaceholder = () => row('<span>&nbsp;</span>', '');

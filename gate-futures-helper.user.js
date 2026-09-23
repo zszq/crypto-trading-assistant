@@ -423,7 +423,6 @@ ${revealOnSelf ? `${blurred}${SHOW}` : `html.tm-blur-${key} ${box}${SHOW} ${inne
 		return row(left, `<span style="text-align:right;white-space:nowrap"><b style="color:var(--color-text-text-primary,inherit)">${avg.toFixed(digits)}</b> ${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%</span>`, `原均价 ${pos.entryText}`);
 	}
 	var renderNotice = (text) => row(`<span>${esc(text)}</span>`, "");
-	var renderPlaceholder = () => row("<span>&nbsp;</span>", "");
 	var BUY_COLOR = "var(--color-function-trade-buy, #2ebd85)";
 	var SELL_COLOR = "var(--color-function-trade-sell, #f6465d)";
 	var lastKey = "";
@@ -431,11 +430,10 @@ ${revealOnSelf ? `${blurred}${SHOW}` : `html.tm-blur-${key} ${box}${SHOW} ${inne
 		hidePanel();
 		lastKey = "";
 	}
-	function render(el, key, html, visible) {
+	function render(el, key, html) {
 		if (key === lastKey && el.innerHTML) return;
 		lastKey = key;
 		el.innerHTML = html;
-		el.style.visibility = visible ? "" : "hidden";
 	}
 	function tick() {
 		const ctx = expect(getContract(), "无法从地址栏解析合约名");
@@ -444,13 +442,14 @@ ${revealOnSelf ? `${blurred}${SHOW}` : `html.tm-blur-${key} ${box}${SHOW} ${inne
 		if (!isSupportedUnit(form.unit, ctx)) {
 			const el = ensurePanel(form.dealbox, form.anchor);
 			el.style.display = "";
-			return render(el, `unit:${form.unit}`, renderNotice(`数量单位为 ${form.unit} 时不预估均价`), true);
+			return render(el, `unit:${form.unit}`, renderNotice(`数量单位为 ${form.unit} 时不预估均价`));
 		}
 		const pos = readPositions(ctx);
 		const qtyLong = toCoin(form.qtyLong, form.unit, ctx);
 		const qtyShort = toCoin(form.qtyShort, form.unit, ctx);
 		const showLong = pos.long && form.qtyLong > 0;
 		const showShort = pos.short && form.qtyShort > 0;
+		if (!showLong && !showShort) return hide();
 		const key = JSON.stringify([
 			ctx.name,
 			form.price,
@@ -460,7 +459,6 @@ ${revealOnSelf ? `${blurred}${SHOW}` : `html.tm-blur-${key} ${box}${SHOW} ${inne
 		]);
 		const el = ensurePanel(form.dealbox, form.anchor);
 		el.style.display = "";
-		if (!showLong && !showShort) return render(el, key, renderPlaceholder(), false);
 		const digits = Math.min(Math.max(decimalsOf(form.priceStr), decimalsOf(pos.long?.entryText || ""), decimalsOf(pos.short?.entryText || "")) + 2, 10);
 		const html = (showLong ? renderLine("开多", BUY_COLOR, pos.long, form.price, qtyLong, digits) : "") + (showShort ? renderLine("开空", SELL_COLOR, pos.short, form.price, qtyShort, digits) : "");
 		if (key !== lastKey) console.debug("[均价预估]", {
@@ -470,7 +468,7 @@ ${revealOnSelf ? `${blurred}${SHOW}` : `html.tm-blur-${key} ${box}${SHOW} ${inne
 			qtyShort,
 			pos
 		});
-		render(el, key, html, true);
+		render(el, key, html);
 	}
 	function initAvgPreview() {
 		every("avgPreview", tick, 300, hide);

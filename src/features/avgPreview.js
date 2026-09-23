@@ -3,7 +3,7 @@ import { every, expect, listen, run } from '../core/guard.js';
 import { getContract, isSupportedUnit, toCoin } from '../gate/contract.js';
 import { readOrderForm } from '../gate/orderForm.js';
 import { readPositions } from '../gate/positions.js';
-import { ensurePanel, hidePanel, renderLine, renderNotice, renderPlaceholder } from '../ui/avgPanel.js';
+import { ensurePanel, hidePanel, renderLine, renderNotice } from '../ui/avgPanel.js';
 import { decimalsOf } from '../utils/number.js';
 
 const BUY_COLOR = 'var(--color-function-trade-buy, #2ebd85)';
@@ -16,12 +16,10 @@ function hide() {
   lastKey = '';
 }
 
-function render(el, key, html, visible) {
+function render(el, key, html) {
   if (key === lastKey && el.innerHTML) return;
   lastKey = key;
   el.innerHTML = html;
-  // 用 visibility 而不是 display：没仓位时面板仍占位，下单按钮位置不随仓位变化跳动
-  el.style.visibility = visible ? '' : 'hidden';
 }
 
 // 先完整读取并校验页面结构，全部通过后才写 DOM：
@@ -29,15 +27,13 @@ function render(el, key, html, visible) {
 function tick() {
   const ctx = expect(getContract(), '无法从地址栏解析合约名');
   const form = readOrderForm();
-  // 面板是否占位只由用户输入决定（开仓标签、有价格且填了数量），不受仓位数据刷新影响，
-  // 这样成交/平仓导致仓位变化时，按钮不会在点击瞬间移动。
   // 没填数量时直接返回，不读仓位区，空闲时几乎没有开销
   if (!form.isOpen || !(form.price > 0) || !(form.qtyLong > 0 || form.qtyShort > 0)) return hide();
 
   if (!isSupportedUnit(form.unit, ctx)) {
     const el = ensurePanel(form.dealbox, form.anchor);
     el.style.display = '';
-    return render(el, `unit:${form.unit}`, renderNotice(`数量单位为 ${form.unit} 时不预估均价`), true);
+    return render(el, `unit:${form.unit}`, renderNotice(`数量单位为 ${form.unit} 时不预估均价`));
   }
 
   const pos = readPositions(ctx);
@@ -47,12 +43,13 @@ function tick() {
   // 只显示已有仓位那个方向：没有仓位时“开仓后均价”就是委托价本身，没有信息量
   const showLong = pos.long && form.qtyLong > 0;
   const showShort = pos.short && form.qtyShort > 0;
+  // 没有可预估的方向时整个面板不显示，不留空白占位
+  if (!showLong && !showShort) return hide();
   const key = JSON.stringify([ctx.name, form.price, qtyLong, qtyShort, pos]);
 
   // 以下开始写 DOM
   const el = ensurePanel(form.dealbox, form.anchor);
   el.style.display = '';
-  if (!showLong && !showShort) return render(el, key, renderPlaceholder(), false);
 
   // 均价多给 2 位小数，避免小额加仓时看不出变化
   const digits = Math.min(
@@ -66,7 +63,7 @@ function tick() {
     // 页面结构随 Gate 改版会变，出问题时在控制台看实际读到的值最快定位
     console.debug('[均价预估]', { price: form.priceStr, unit: form.unit, qtyLong, qtyShort, pos });
   }
-  render(el, key, html, true);
+  render(el, key, html);
 }
 
 export function initAvgPreview() {
