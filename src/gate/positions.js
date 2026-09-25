@@ -45,7 +45,8 @@ export function readPositions(ctx) {
     // 资产等其他模块若也出现“开仓均价”标签，不属于仓位卡片
     if (!label.closest('.scroll-table-bottom-box')) return;
     let card = label.parentElement;
-    while (card && !/^[A-Z0-9]+USDT\n/.test(card.innerText)) card = card.parentElement;
+    // 合约名可能是中文，不能限定为 [A-Z0-9]
+    while (card && !/^\S+USDT\n/.test(card.innerText)) card = card.parentElement;
     expect(card, '仓位卡片未找到（以合约名开头的容器）');
     const lines = card.innerText.split('\n').map((s) => s.trim());
     const qtyIdx = lines.indexOf('数量');

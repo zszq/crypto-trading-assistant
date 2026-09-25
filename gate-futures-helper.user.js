@@ -206,7 +206,13 @@ ${revealOnSelf ? `${blurred}${SHOW}` : `html.tm-blur-${key} ${box}${SHOW} ${inne
 	};
 	var decimalsOf = (s) => (String(s).split(".")[1] || "").replace(/\D.*$/, "").length;
 	function getContract() {
-		const m = location.pathname.match(/futures\/USDT\/([A-Z0-9]+_USDT)/i);
+		let path;
+		try {
+			path = decodeURIComponent(location.pathname);
+		} catch (e) {
+			return null;
+		}
+		const m = path.match(/futures\/USDT\/([^/_\s]+_USDT)/i);
 		if (!m) return null;
 		const name = m[1].toUpperCase();
 		return {
@@ -225,7 +231,7 @@ ${revealOnSelf ? `${blurred}${SHOW}` : `html.tm-blur-${key} ${box}${SHOW} ${inne
 		const fail = () => multiplierCache[contract] = { failedAt: Date.now() };
 		_GM_xmlhttpRequest({
 			method: "GET",
-			url: CONTRACT_API + contract,
+			url: CONTRACT_API + encodeURIComponent(contract),
 			timeout: 1e4,
 			onload: (r) => {
 				const v = (() => {
@@ -336,7 +342,7 @@ ${revealOnSelf ? `${blurred}${SHOW}` : `html.tm-blur-${key} ${box}${SHOW} ${inne
 			if (label.textContent.trim() !== "开仓均价" || label.closest("table")) return;
 			if (!label.closest(".scroll-table-bottom-box")) return;
 			let card = label.parentElement;
-			while (card && !/^[A-Z0-9]+USDT\n/.test(card.innerText)) card = card.parentElement;
+			while (card && !/^\S+USDT\n/.test(card.innerText)) card = card.parentElement;
 			expect(card, "仓位卡片未找到（以合约名开头的容器）");
 			const lines = card.innerText.split("\n").map((s) => s.trim());
 			const qtyIdx = lines.indexOf("数量");

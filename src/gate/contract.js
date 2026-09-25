@@ -4,7 +4,14 @@ import { num } from '../utils/number.js';
 
 // 从 URL 取合约名，SPA 内切换币种时 URL 会变，所以每次都现取
 export function getContract() {
-  const m = location.pathname.match(/futures\/USDT\/([A-Z0-9]+_USDT)/i);
+  // 存在中文等非 ASCII 合约名（如 龙虾_USDT），地址栏里是百分号编码，需先解码再匹配
+  let path;
+  try {
+    path = decodeURIComponent(location.pathname);
+  } catch (e) {
+    return null;
+  }
+  const m = path.match(/futures\/USDT\/([^/_\s]+_USDT)/i);
   if (!m) return null;
   const name = m[1].toUpperCase();
   return { name, base: name.split('_')[0], display: name.replace('_', '') };
@@ -23,7 +30,7 @@ function getMultiplier(contract) {
   const fail = () => (multiplierCache[contract] = { failedAt: Date.now() });
   GM_xmlhttpRequest({
     method: 'GET',
-    url: CONTRACT_API + contract,
+    url: CONTRACT_API + encodeURIComponent(contract),
     timeout: 10000,
     onload: (r) => {
       const v = (() => {
