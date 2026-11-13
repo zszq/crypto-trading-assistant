@@ -1,5 +1,5 @@
 import { expect } from '../core/guard.js';
-import { num } from '../utils/number.js';
+import { isDecimal, isPositive, num } from '../utils/number.js';
 import { isSupportedUnit, toCoin } from './contract.js';
 import { isLiquidationLabel, isMarginLabel, parsePositionRisk } from './riskFields.js';
 
@@ -12,12 +12,12 @@ export function readPositions(ctx) {
   const result = { long: null, short: null };
   const add = (where, name, side, sizeText, entryText, risk) => {
     const entry = num(entryText);
-    const size = Math.abs(num(sizeText));
+    const size = isDecimal(num(sizeText)) ? num(sizeText).abs() : NaN;
     // 每一行都校验，而不只是当前合约：任何一行读不出来都说明结构变了
     expect(name, `${where}中合约名未找到`);
     expect(side, `${where}中多/空方向未找到`);
-    expect(entry > 0, `${where}中开仓均价无法解析：“${entryText}”`);
-    expect(size > 0, `${where}中数量无法解析：“${sizeText}”`);
+    expect(isPositive(entry), `${where}中开仓均价无法解析：“${entryText}”`);
+    expect(isPositive(size), `${where}中数量无法解析：“${sizeText}”`);
     if (name !== ctx.display) return;
     const unit = (sizeText.match(/[^\d.,\s-]+$/) || [''])[0];
     // 仓位单位跟随下单单位设置，USDT 模式下直接视为不可用

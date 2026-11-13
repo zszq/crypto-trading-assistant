@@ -1,3 +1,4 @@
+import { formatPrice, isPositive, weightedEntry } from '../utils/number.js';
 import { PANEL_ID } from '../config.js';
 import { listen, onCleanup } from '../core/guard.js';
 import { calculateBreakEven, estimateBreakEven } from '../utils/breakEven.js';
@@ -155,38 +156,38 @@ const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&l
 const row = (left, right, title = '') =>
   `<div style="display:flex;justify-content:space-between;align-items:baseline;gap:6px" title="${esc(title)}">${left}${right}</div>`;
 
-function renderBreakEvenResult(label, color, result, digits, title) {
-  const value = result.notice || result.price.toFixed(digits);
+function renderBreakEvenResult(label, color, result, title) {
+  const value = result.notice || formatPrice(result.price);
   const left = `<span style="color:${color};white-space:nowrap">${label}</span>`;
   const right = `<span style="text-align:right;white-space:nowrap"><b style="color:var(--color-text-text-primary,inherit)">${esc(value)}</b></span>`;
   return row(left, right, title);
 }
 
-export function renderBreakEvenLine(positions, digits) {
-  return renderBreakEvenResult('盈亏平衡价', 'inherit', calculateBreakEven(positions), digits,
+export function renderBreakEvenLine(positions) {
+  return renderBreakEvenResult('盈亏平衡价', 'inherit', calculateBreakEven(positions),
     '当前持仓合计未实现盈亏为零的价格，不含本次委托、手续费和资金费；等量多空持仓的合计盈亏不随价格变化');
 }
 
-export function renderClosingBreakEvenLine(label, color, positions, side, price, qty, digits) {
-  return renderBreakEvenResult(`${label}后盈亏平衡价`, color, estimateBreakEven({ positions, side, price, qty }), digits,
+export function renderClosingBreakEvenLine(label, color, positions, side, price, qty) {
+  return renderBreakEvenResult(`${label}后盈亏平衡价`, color, estimateBreakEven({ positions, side, price, qty }),
     `假设本次${label}按委托价全部成交后，多空持仓以同一价格全部平仓时合计盈亏为零的价格，不含手续费和资金费；仅模拟当前方向的一笔加仓`);
 }
 
-export function renderLine(label, color, pos, price, qty, digits) {
+export function renderLine(label, color, pos, price, qty) {
   const left = `<span style="color:${color};white-space:nowrap">${label}后均价</span>`;
   // “张”要等合约乘数接口返回
-  if (!Number.isFinite(pos.size) || !Number.isFinite(qty)) return row(left, '<span>换算中…</span>');
-  const avg = (pos.entry * pos.size + price * qty) / (pos.size + qty);
-  const right = `<span style="text-align:right;white-space:nowrap"><b style="color:var(--color-text-text-primary,inherit)">${avg.toFixed(digits)}</b></span>`;
-  return row(left, right, `原均价 ${pos.entryText}`);
+  if (!isPositive(pos.size) || !isPositive(qty)) return row(left, '<span>换算中…</span>');
+  const avg = weightedEntry(pos, price, qty);
+  const right = `<span style="text-align:right;white-space:nowrap"><b style="color:var(--color-text-text-primary,inherit)">${formatPrice(avg)}</b></span>`;
+  return row(left, right, `原均价 ${formatPrice(pos.entry)}`);
 }
 
-export function renderLiquidationLine(label, color, result, digits, followingLine = '') {
+export function renderLiquidationLine(label, color, result, followingLine = '') {
   const left = `<span style="color:${color};white-space:nowrap">${label}后预估强平价</span>`;
-  const values = [result.lower, result.upper].filter((value) => Number.isFinite(value) && value > 0);
+  const values = [result.lower, result.upper].filter(isPositive);
   const value = values.length === 2
-    ? `↓ ${values[0].toFixed(digits)} / ↑ ${values[1].toFixed(digits)}`
-    : values.length ? `≈ ${values[0].toFixed(digits)}` : result.loading ? '—' : '暂无法预估';
+    ? `↓ ${formatPrice(values[0])} / ↑ ${formatPrice(values[1])}`
+    : values.length ? `≈ ${formatPrice(values[0])}` : result.loading ? '—' : '暂无法预估';
   // 加载提示放在固定高度的标题栏，数据区保留强平价行，避免请求刷新时反复增减行数。
   const notice = result.loading ? '' : result.notice;
   const title = [notice, result.explanation].filter(Boolean).join('；');

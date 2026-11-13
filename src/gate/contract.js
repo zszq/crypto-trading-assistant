@@ -1,5 +1,5 @@
 import { CONTRACT_API } from '../config.js';
-import { num } from '../utils/number.js';
+import { isPositive, num } from '../utils/number.js';
 import { readPublicData } from './publicData.js';
 
 // 从 URL 取合约名，SPA 内切换币种时 URL 会变，所以每次都现取
@@ -28,7 +28,7 @@ export function toCoin(qty, unit, ctx) {
   if (unit === '张') {
     const details = readContractDetails(ctx.name).data;
     const multiplier = num(details?.quanto_multiplier);
-    return details?.name === ctx.name && multiplier > 0 ? qty * multiplier : NaN;
+    return details?.name === ctx.name && isPositive(multiplier) && isPositive(qty) ? num(qty).times(multiplier) : NaN;
   }
   return NaN;
 }

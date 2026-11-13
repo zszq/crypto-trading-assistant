@@ -27,7 +27,7 @@ export const isLiquidationLabel = (text) => /^(?:预估)?强平(?:价|价格)(?:
 export const isMarginLabel = (text) => /^(?:仓位)?保证金(?:\(USDT\))?$/.test(text.replace(/\s/g, '').replace(/（/g, '(').replace(/）/g, ')'));
 
 export function parseOrderRisk(text) {
-  const leverages = [...String(text).matchAll(/(?:^|[^\d.])(\d+(?:\.\d+)?)\s*(?:[xX×]|倍)(?=$|[^a-zA-Z])/g)].map((m) => Number(m[1]));
+  const leverages = [...String(text).matchAll(/(?:^|[^\d.])(\d+(?:\.\d+)?)\s*(?:[xX×]|倍)(?=$|[^a-zA-Z])/g)].map((m) => num(m[1]));
   return {
     marginMode: parseMarginMode(text),
     leverageLong: leverages.length === 1 || leverages.length === 2 ? leverages[0] : NaN,

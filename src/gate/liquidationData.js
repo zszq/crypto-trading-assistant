@@ -1,3 +1,4 @@
+import { isDecimal, isPositive, num } from '../utils/number.js';
 import { CONTRACT_API } from '../config.js';
 import { readContractDetails } from './contract.js';
 import { readPublicData } from './publicData.js';
@@ -17,9 +18,9 @@ export function readLiquidationData(ctx, form) {
   }
   const contract = details.data;
   const normalized = normalizeTiers(tiers.data);
-  const fee = Number.parseFloat(contract.taker_fee_rate);
-  const mark = Number.parseFloat(contract.mark_price);
-  if (contract.name !== ctx.name || contract.type !== 'direct' || !Number.isFinite(mark) || !(mark > 0) || !(fee >= 0 && fee < 0.1) || !normalized) {
+  const fee = num(contract.taker_fee_rate);
+  const mark = num(contract.mark_price);
+  if (contract.name !== ctx.name || contract.type !== 'direct' || !isPositive(mark) || !isDecimal(fee) || !(fee.gte(0) && fee.lt('0.1')) || !normalized) {
     return { settings, notice: '合约风险参数不完整' };
   }
   return { settings, market: { fee, mark, tiers: normalized } };

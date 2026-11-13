@@ -1,3 +1,4 @@
+import { formatPrice, num } from '../src/utils/number.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { estimateLiquidation, hedgeMaintenance, maintenanceMargin, normalizeTiers, positionPnl } from '../src/utils/liquidation.js';
@@ -6,7 +7,7 @@ import { PANEL_ID } from '../src/config.js';
 
 const tier = (limit, rate, deduction = 0, leverage = 100) => ({ risk_limit: String(limit), maintenance_rate: String(rate), deduction: String(deduction), leverage_max: String(leverage) });
 const tiers = normalizeTiers([tier(1000000, 0.004), tier(2000000, 0.005, 1000), tier(5000000, 0.007, 5000)]);
-const near = (actual, expected, tolerance = 1e-7) => assert.ok(Math.abs(actual - expected) < tolerance, `${actual} ≠ ${expected}`);
+const near = (actual, expected, tolerance = 1e-7) => assert.ok(num(actual).minus(expected).abs().lt(tolerance), `${actual} ≠ ${expected}`);
 const settings = (mode = 'cross', leverage = 10) => ({ marginMode: mode, leverageLong: leverage, leverageShort: leverage });
 
 test('官方梯度示例：180 万仓位的维持保证金为 9100 USDT，含平仓费', () => {
@@ -56,7 +57,7 @@ test('全仓：加仓不凭空增加账户保证金；当前强平价更新后�
   const result = estimateLiquidation(input);
   near(result.lower, (1200 - margin + 200 * 0.00075) / (12 * (1 - 0.00475)));
   input.positions.long.liquidation = 85;
-  assert.ok(estimateLiquidation(input).lower > result.lower);
+  assert.ok(estimateLiquidation(input).lower.gt(result.lower));
 });
 
 test('双向全仓：用官方对冲维持保证金模型，分别模拟单边订单', () => {
@@ -68,13 +69,13 @@ test('双向全仓：用官方对冲维持保证金模型，分别模拟单边�
   const fee = 0.00075;
   const market = { tiers: local, fee, mark: 2611.53 };
   near(hedgeMaintenance(positions, 2594, local, fee), 2594 * (0.03 * 0.00575 + 0.01 * 0.00075));
-  const margin = hedgeMaintenance(positions, 2212.86, local, fee) - positionPnl(positions, 2212.86);
+  const margin = hedgeMaintenance(positions, 2212.86, local, fee).minus(positionPnl(positions, 2212.86));
   for (const side of ['long', 'short']) {
     const result = estimateLiquidation({ positions, side, price: 2600, qty: 0.005, settings: settings(), market });
     const next = structuredClone(positions);
     next[side].entry = (next[side].entry * next[side].size + 2600 * 0.005) / (next[side].size + 0.005);
     next[side].size += 0.005;
-    near(margin - 2600 * 0.005 * fee + positionPnl(next, result.lower) - hedgeMaintenance(next, result.lower, local, fee), 0);
+    near(margin.minus(num(2600).times(0.005).times(fee)).plus(positionPnl(next, result.lower)).minus(hedgeMaintenance(next, result.lower, local, fee)), 0);
   }
 });
 
@@ -109,10 +110,10 @@ test('无正值边界、杠杆缺失和加仓超档位会说明原因', () => {
 
 test('字段解析兼容中文卡片、千分位及多空两套杠杆；缺字段不猜值', () => {
   assert.deepEqual(parsePositionRisk('多 逐仓 20X', '1,234.56 USDT', '54,587.40'), {
-    marginMode: 'isolated', margin: 1234.56, liquidation: 54587.4, liquidationText: '54,587.40',
+    marginMode: 'isolated', margin: num(1234.56), liquidation: num(54587.4), liquidationText: '54,587.40',
   });
-  assert.equal(parseOrderRisk('全仓\n20X\n10X\n开仓').leverageShort, 10);
-  assert.equal(parseOrderRisk('逐仓\n25X').leverageShort, 25);
+  assert.equal(parseOrderRisk('全仓\n20X\n10X\n开仓').leverageShort.toFixed(), '10');
+  assert.equal(parseOrderRisk('逐仓\n25X').leverageShort.toFixed(), '25');
   assert.equal(parseOrderRisk('全仓\n逐仓').marginMode, null);
   assert.ok(Number.isNaN(fieldNumber('--')));
   assert.ok(Number.isNaN(fieldNumber('USDT 100')));
@@ -147,7 +148,7 @@ test('切回支持的模式后，旧面板提示不会再次把预估锁为不�
     const settings = readOrderRisk(root);
     assert.equal(settings.unsupported, false);
     assert.equal(settings.marginMode, 'isolated');
-    assert.equal(settings.leverageLong, 20);
+    assert.equal(settings.leverageLong.toFixed(), '20');
     const result = estimateLiquidation({
       positions: { long: { entry: 100, size: 1, margin: 10, marginMode: 'isolated' } },
       side: 'long', price: 100, qty: 1, settings,
@@ -162,5 +163,81 @@ test('切回支持的模式后，旧面板提示不会再次把预估锁为不�
   } finally {
     if (previousStyle === undefined) delete globalThis.getComputedStyle;
     else globalThis.getComputedStyle = previousStyle;
+  }
+});
+
+test('强平价直接求解：整数结果不携带二分尾差，兼容极小价格', () => {
+  const local = normalizeTiers([tier('1000000', '0.01')]);
+  for (const scale of ['1', '1e-150', '1e100']) {
+    for (const [margin, expected] of [['31.645', '80'], ['33.6235', '79']]) {
+      const price = num('100').times(scale);
+      const riskTiers = scale === '1e100' ? normalizeTiers([tier('1e110', '0.01')]) : local;
+      const result = estimateLiquidation({
+        positions: { long: { entry: price, size: num('1'), margin: num(margin).times(scale), marginMode: 'isolated' } },
+        side: 'long', price, qty: num('1'), settings: settings('isolated'),
+        market: { tiers: riskTiers, fee: num('0.00075'), mark: price },
+      });
+      assert.ok(result.lower.eq(num(expected).times(scale)), `${scale}: ${result.lower}`);
+      assert.equal(formatPrice(result.lower), formatPrice(num(expected).times(scale)));
+      assert.equal(result.upper, null);
+    }
+  }
+});
+
+test('强平边界恰好落在风险档位交界处时仍精确返回', () => {
+  const local = normalizeTiers([tier('160', '0.01'), tier('1000', '0.02', '1.6')]);
+  const result = estimateLiquidation({
+    positions: { long: { entry: num('100'), size: num('1'), margin: num('31.645'), marginMode: 'isolated' } },
+    side: 'long', price: num('100'), qty: num('1'), settings: settings('isolated'),
+    market: { tiers: local, fee: num('0.00075'), mark: num('100') },
+  });
+  assert.equal(result.lower.toFixed(), '80');
+});
+
+test('接近对冲且跨档位时，同时返回上下边界并满足维持保证金方程', () => {
+  const local = normalizeTiers([tier('200', '0.001'), tier('1000', '0.05', '9.8')]);
+  const positions = {
+    long: { size: num('1.01'), entry: num('100'), liquidation: num('80'), marginMode: 'cross' },
+    short: { size: num('1'), entry: num('100'), liquidation: num('80'), marginMode: 'cross' },
+  };
+  const result = estimateLiquidation({ positions, side: 'long', price: num('100'), qty: num('0.01'), settings: settings(),
+    market: { tiers: local, fee: num('0'), mark: num('150') } });
+  assert.ok(result.lower.lt('150'));
+  assert.ok(result.upper.gt('150'));
+  const margin = hedgeMaintenance(positions, num('80'), local, num('0')).minus(positionPnl(positions, num('80')));
+  const next = { ...positions, long: { size: num('1.02'), entry: num('100') } };
+  for (const price of [result.lower, result.upper]) {
+    assert.ok(margin.plus(positionPnl(next, price)).minus(hedgeMaintenance(next, price, local, num('0'))).abs().lt('1e-90'));
+  }
+});
+
+test('空仓整数强平价位于最大风险限额时仍精确返回', () => {
+  const local = normalizeTiers([tier('240', '0.01')]);
+  const result = estimateLiquidation({
+    positions: { short: { entry: num('100'), size: num('1'), margin: num('32.4975'), marginMode: 'isolated' } },
+    side: 'short', price: num('100'), qty: num('1'), settings: settings('isolated'),
+    market: { tiers: local, fee: num('0.00075'), mark: num('100') },
+  });
+  assert.equal(result.upper.toFixed(), '120');
+  assert.equal(formatPrice(result.upper), '120');
+  assert.equal(result.lower, null);
+});
+
+test('3 倍杠杆先合并保证金和预留平仓费，再求强平价，不引入循环小数尾差', () => {
+  const local = normalizeTiers([tier('1000000', '0.01')]);
+  // 第一例覆盖先求 1/3 的尾差；第二例的两笔费用分别除以 3 会截断，但合计恰好为 36。
+  for (const [priceText, marginText, feeText] of [['99', '10.481', '0.00075'], ['100', '11.2', '0.02']]) {
+    for (const scale of ['1', '1e-150']) {
+      const price = num(priceText).times(scale);
+      const result = estimateLiquidation({
+        positions: { short: { entry: num('100').times(scale), size: num('1'), margin: num(marginText).times(scale), marginMode: 'isolated' } },
+        side: 'short', price, qty: num('1'), settings: settings('isolated', 3),
+        market: { tiers: local, fee: num(feeText), mark: num('100').times(scale) },
+      });
+      const expected = num('120').times(scale);
+      assert.ok(result.upper.eq(expected), `${priceText} / ${feeText} / ${scale}: ${result.upper}`);
+      assert.equal(formatPrice(result.upper), formatPrice(expected));
+      assert.equal(result.lower, null);
+    }
   }
 });

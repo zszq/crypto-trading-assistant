@@ -1,5 +1,5 @@
 import { expect } from '../core/guard.js';
-import { num } from '../utils/number.js';
+import { isPositive, num } from '../utils/number.js';
 
 // 读取下单区。只读不写：结构不对应时抛 StructureError，由 guard 处理。
 // 区分“结构不对应”（抛错）和“正常的缺省状态”（如市价单没有价格框、未填数量，返回 NaN）
@@ -41,14 +41,14 @@ export function readOrderForm() {
   if (!priceInput) return base;
   base.priceStr = priceInput.value;
   base.price = num(priceInput.value);
-  if (!(base.price > 0)) return base;
+  if (!isPositive(base.price)) return base;
 
   const raw = qtyInput.value.trim();
   // 用滑块按百分比下单时，数量框里是“25%”，真实数量在框下方的提示里：
   // “≈ 190,638 / 184,885 WIF”，绿色是开多数量、红色是开空数量，两者不同，必须分开取。
   // 非百分比模式下这行显示的是 USDT 成本，不能当数量用，所以只在 % 时读取
   if (raw.endsWith('%')) {
-    if (!(num(raw) > 0)) return base; // 0% 时提示行可能不存在
+    if (!isPositive(num(raw))) return base; // 0% 时提示行可能不存在
     const hint = expect(wrapper.querySelector('.mantine-InputWrapper-error'), '百分比数量提示行未找到');
     const add = expect(hint.querySelector('.font-add-color'), '百分比提示中的开多数量 .font-add-color 未找到');
     const dec = expect(hint.querySelector('.font-dec-color'), '百分比提示中的开空数量 .font-dec-color 未找到');

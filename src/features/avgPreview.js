@@ -5,7 +5,7 @@ import { readOrderForm } from '../gate/orderForm.js';
 import { readPositions } from '../gate/positions.js';
 import { readLiquidationData } from '../gate/liquidationData.js';
 import { ensurePanel, hidePanel, renderPanel, renderBreakEvenLine, renderClosingBreakEvenLine, renderLine, renderLiquidationLine, renderNotice } from '../ui/avgPanel.js';
-import { decimalsOf } from '../utils/number.js';
+import { isPositive } from '../utils/number.js';
 import { estimateLiquidation } from '../utils/liquidation.js';
 
 const BUY_COLOR = 'var(--color-function-trade-buy, #2ebd85)';
@@ -30,7 +30,7 @@ function tick() {
   const ctx = expect(getContract(), '无法从地址栏解析合约名');
   const form = readOrderForm();
   // 没填数量时直接返回，不读仓位区，空闲时几乎没有开销
-  if (!form.isOpen || !(form.price > 0) || !(form.qtyLong > 0 || form.qtyShort > 0)) return hide();
+  if (!form.isOpen || !isPositive(form.price) || !(isPositive(form.qtyLong) || isPositive(form.qtyShort))) return hide();
 
   if (!isSupportedUnit(form.unit, ctx)) {
     const el = ensurePanel();
@@ -43,8 +43,8 @@ function tick() {
   const qtyLong = toCoin(form.qtyLong, form.unit, ctx);
   const qtyShort = toCoin(form.qtyShort, form.unit, ctx);
   // 只显示已有仓位那个方向：没有仓位时“开仓后均价”就是委托价本身，没有信息量
-  const showLong = pos.long && form.qtyLong > 0;
-  const showShort = pos.short && form.qtyShort > 0;
+  const showLong = pos.long && isPositive(form.qtyLong);
+  const showShort = pos.short && isPositive(form.qtyShort);
   // 没有可预估的方向时整个面板不显示，不留空白占位
   if (!showLong && !showShort) return hide();
   const risk = readLiquidationData(ctx, form);
@@ -59,19 +59,14 @@ function tick() {
   const el = ensurePanel();
   el.style.display = 'flex';
 
-  // 均价多给 2 位小数，避免小额加仓时看不出变化
-  const digits = Math.min(
-    Math.max(decimalsOf(form.priceStr), decimalsOf(pos.long?.entryText || ''), decimalsOf(pos.short?.entryText || '')) + 2,
-    10
-  );
   const html =
-    renderBreakEvenLine(pos, digits) +
-    (showLong ? renderLine('开多', BUY_COLOR, pos.long, form.price, qtyLong, digits) +
-      renderLiquidationLine('开多', BUY_COLOR, liquidationLong, digits,
-        renderClosingBreakEvenLine('开多', BUY_COLOR, pos, 'long', form.price, qtyLong, digits)) : '') +
-    (showShort ? renderLine('开空', SELL_COLOR, pos.short, form.price, qtyShort, digits) +
-      renderLiquidationLine('开空', SELL_COLOR, liquidationShort, digits,
-        renderClosingBreakEvenLine('开空', SELL_COLOR, pos, 'short', form.price, qtyShort, digits)) : '');
+    renderBreakEvenLine(pos) +
+    (showLong ? renderLine('开多', BUY_COLOR, pos.long, form.price, qtyLong) +
+      renderLiquidationLine('开多', BUY_COLOR, liquidationLong,
+        renderClosingBreakEvenLine('开多', BUY_COLOR, pos, 'long', form.price, qtyLong)) : '') +
+    (showShort ? renderLine('开空', SELL_COLOR, pos.short, form.price, qtyShort) +
+      renderLiquidationLine('开空', SELL_COLOR, liquidationShort,
+        renderClosingBreakEvenLine('开空', SELL_COLOR, pos, 'short', form.price, qtyShort)) : '');
   if (key !== lastKey) {
     // 页面结构随 Gate 改版会变，出问题时在控制台看实际读到的值最快定位
     console.debug('[均价预估]', { price: form.priceStr, unit: form.unit, qtyLong, qtyShort, pos });
