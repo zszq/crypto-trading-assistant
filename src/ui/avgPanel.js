@@ -49,4 +49,15 @@ export function renderLine(label, color, pos, price, qty, digits) {
   return row(left, right, `原均价 ${pos.entryText}`);
 }
 
+export function renderLiquidationLine(label, color, result, digits) {
+  const left = `<span style="color:${color};white-space:nowrap">${label}后预估强平价</span>`;
+  const values = [result.lower, result.upper].filter((value) => Number.isFinite(value) && value > 0);
+  const value = values.length === 2
+    ? `↓ ${values[0].toFixed(digits)} / ↑ ${values[1].toFixed(digits)}`
+    : values.length ? `≈ ${values[0].toFixed(digits)}` : '暂无法预估';
+  const title = [result.notice, result.explanation].filter(Boolean).join('；');
+  const right = `<span style="text-align:right">${esc(value)}</span>`;
+  return row(left, right, title) + (result.notice ? row(`<span style="font-size:11px">${esc(result.notice)}</span>`, '') : '');
+}
+
 export const renderNotice = (text) => row(`<span>${esc(text)}</span>`, '');

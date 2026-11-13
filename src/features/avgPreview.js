@@ -1,10 +1,12 @@
 import { TICK_MS } from '../config.js';
-import { every, expect, listen, run } from '../core/guard.js';
+import { every, expect, listen, onCleanup, run } from '../core/guard.js';
 import { getContract, isSupportedUnit, toCoin } from '../gate/contract.js';
 import { readOrderForm } from '../gate/orderForm.js';
 import { readPositions } from '../gate/positions.js';
-import { ensurePanel, hidePanel, renderLine, renderNotice } from '../ui/avgPanel.js';
+import { readLiquidationData } from '../gate/liquidationData.js';
+import { ensurePanel, hidePanel, renderLine, renderLiquidationLine, renderNotice } from '../ui/avgPanel.js';
 import { decimalsOf } from '../utils/number.js';
+import { estimateLiquidation } from '../utils/liquidation.js';
 
 const BUY_COLOR = 'var(--color-function-trade-buy, #2ebd85)';
 const SELL_COLOR = 'var(--color-function-trade-sell, #f6465d)';
@@ -45,7 +47,13 @@ function tick() {
   const showShort = pos.short && form.qtyShort > 0;
   // 没有可预估的方向时整个面板不显示，不留空白占位
   if (!showLong && !showShort) return hide();
-  const key = JSON.stringify([ctx.name, form.price, qtyLong, qtyShort, pos]);
+  const risk = readLiquidationData(ctx, form);
+  const preview = (side, qty) => risk.notice ? { notice: risk.notice } : estimateLiquidation({
+    positions: pos, side, price: form.price, qty, ...risk,
+  });
+  const liquidationLong = showLong ? preview('long', qtyLong) : null;
+  const liquidationShort = showShort ? preview('short', qtyShort) : null;
+  const key = JSON.stringify([ctx.name, form.price, qtyLong, qtyShort, pos, liquidationLong, liquidationShort]);
 
   // 以下开始写 DOM
   const el = ensurePanel(form.dealbox, form.anchor);
@@ -57,8 +65,8 @@ function tick() {
     10
   );
   const html =
-    (showLong ? renderLine('开多', BUY_COLOR, pos.long, form.price, qtyLong, digits) : '') +
-    (showShort ? renderLine('开空', SELL_COLOR, pos.short, form.price, qtyShort, digits) : '');
+    (showLong ? renderLine('开多', BUY_COLOR, pos.long, form.price, qtyLong, digits) + renderLiquidationLine('开多', BUY_COLOR, liquidationLong, digits) : '') +
+    (showShort ? renderLine('开空', SELL_COLOR, pos.short, form.price, qtyShort, digits) + renderLiquidationLine('开空', SELL_COLOR, liquidationShort, digits) : '');
   if (key !== lastKey) {
     // 页面结构随 Gate 改版会变，出问题时在控制台看实际读到的值最快定位
     console.debug('[均价预估]', { price: form.priceStr, unit: form.unit, qtyLong, qtyShort, pos });
@@ -70,5 +78,10 @@ export function initAvgPreview() {
   // 结构暂时不对应（宽限期内）时，面板回到隐藏状态，不展示可能读错的数据
   every('avgPreview', tick, TICK_MS, hide);
   // 手动输入时立即刷新，不等下一次轮询；放到下一帧再读，确保 React 已经处理完这次输入
-  listen(document, 'input', () => requestAnimationFrame(() => run('avgPreview', tick, hide)), true);
+  let frame;
+  listen(document, 'input', () => {
+    cancelAnimationFrame(frame);
+    frame = requestAnimationFrame(() => run('avgPreview', tick, hide));
+  }, true);
+  onCleanup(() => cancelAnimationFrame(frame));
 }

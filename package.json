@@ -1,9 +1,10 @@
 {
   "name": "gate-futures-helper",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "private": true,
   "type": "module",
   "scripts": {
+    "test": "node --test",
     "dev": "vite",
     "build": "vite build && node -e \"require('fs').copyFileSync('dist/gate-futures-helper.user.js','gate-futures-helper.user.js')\"",
     "preview": "vite preview"

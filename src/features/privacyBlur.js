@@ -1,8 +1,8 @@
 import { GM_getValue, GM_setValue } from '$';
 import { addStyle, every, expect, onCleanup } from '../core/guard.js';
 
-// 隐私模糊：资产 / 开仓 / 仓位三个模块可按需模糊，鼠标移入或输入框聚焦时显示。
-// 开关放在仓位栏“仅显示当前市场”前面，勾选的模块才模糊，默认都不勾选。
+// 隐私隐藏：资产 / 开仓 / 仓位三个模块可完全隐藏，鼠标移入或输入框聚焦时显示。
+// 沿用原“模糊”开关和存储键，避免已有隐私设置在升级后失效。
 //
 // 实现上全部用 CSS：开关状态挂在 <html> 的类名上，模块用 :has() 识别。
 // React 重渲染会替换模块内部节点，把状态放在 <html> 上才不会丢；
@@ -68,27 +68,25 @@ export function verifyBlurStructure() {
   return anchor;
 }
 
-// 显示必须是瞬时的：过渡期间内容还是糊的，鼠标刚移入就点击会在看不清时误操作；
-// 只在移出时保留渐变
+// opacity: 0 能完全隐藏内容，同时保留布局和鼠标命中区域，才可以通过悬停恢复。
+// 显示不做过渡，避免鼠标移入就点击时仍看不清；仅在移出时保留渐变。
 function buildCss() {
   const SHOW = ':is(:hover, :focus-within)';
-  return (
-    Object.entries(TARGETS)
-      .map(([key, { box, inner, revealOnSelf }]) => {
-        const blurred = `html.tm-blur-${key} ${box} ${inner}`;
-        const shown = revealOnSelf ? `${blurred}${SHOW}` : `html.tm-blur-${key} ${box}${SHOW} ${inner}`;
-        return `
-${blurred} { filter: blur(6px); transition: filter .15s; }
-${shown} { filter: none; transition: none; }`;
-      })
-      .join('\n') +
-    `
+  return Object.entries(TARGETS).map(([key, { box, inner, revealOnSelf }]) => {
+    const blurred = `html.tm-blur-${key} ${box} ${inner}`;
+    const shown = revealOnSelf ? `${blurred}${SHOW}` : `html.tm-blur-${key} ${box}${SHOW} ${inner}`;
+    return `
+${blurred} { opacity: 0; transition: opacity .15s; }
+${shown} {
+  opacity: 1;
+  transition: none;
+}`;
+  }).join('\n') + `
 #${TOGGLES_ID} { display: flex; align-items: center; gap: 8px; font-size: 12px; white-space: nowrap;
   color: var(--color-text-text-secondary, #8d93a6); }
 #${TOGGLES_ID} label { display: inline-flex; align-items: center; gap: 3px; cursor: pointer; }
 #${TOGGLES_ID} input { margin: 0; width: 12px; height: 12px; cursor: pointer;
-  accent-color: var(--color-text-text-primary, currentColor); }`
-  );
+  accent-color: var(--color-text-text-primary, currentColor); }`;
 }
 
 function loadState() {

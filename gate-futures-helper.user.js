@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         Gate 合约助手
 // @namespace    http://tampermonkey.net/
-// @version      1.6.0
+// @version      1.7.0
 // @author       zl
-// @description  Gate USDT 永续合约：限价下单时预估开仓后的持仓均价
+// @description  Gate USDT 永续合约：登录后预估加仓均价与强平价，支持模块隐私模糊
 // @match        https://www.gate.com/*futures/USDT/*
 // @match        https://www.gate.io/*futures/USDT/*
 // @connect      api.gateio.ws
@@ -49,6 +49,16 @@
 		bar.append(text, close);
 		document.documentElement.appendChild(bar);
 	}
+	var AUTH_TEXT = /^(?:登录|注册|立即登录|立即注册|登录\s*[\/／或|·]\s*注册|log\s*in|sign\s*in|sign\s*up|register)$/i;
+	var visible = (el) => el.getClientRects().length > 0 && getComputedStyle(el).visibility !== "hidden";
+	function readAccountState() {
+		const box = document.querySelector(".dealbox");
+		const controls = box ? [...box.querySelectorAll("button, a, [role=\"button\"]")].filter(visible) : [];
+		if (controls.some((el) => AUTH_TEXT.test(el.textContent.replace(/\s+/g, " ").trim()))) return "loggedOut";
+		if ([...document.querySelectorAll("a[href*=\"/login\"], a[href*=\"/signin\"]")].some((el) => visible(el) && el.getBoundingClientRect().top < 160 && AUTH_TEXT.test(el.textContent.trim()))) return "loggedOut";
+		if (!box) return "pending";
+		return controls.some((el) => /^(?:开多|开空|平多|平空|买入\s*[/／(（]?\s*(?:[开做]多|平空)|卖出\s*[/／(（]?\s*(?:[开做]空|平多))/.test(el.textContent.trim())) ? "loggedIn" : "pending";
+	}
 	var StructureError = class extends Error {};
 	function expect(cond, message) {
 		if (!cond) throw new StructureError(message);
@@ -56,25 +66,38 @@
 	}
 	var GRACE_MS = 3e3;
 	var disabled = false;
+	var accountPendingSince = null;
 	var cleanups = [];
 	var failingSince = {};
+	var isDisabled = () => disabled;
 	function onCleanup(fn) {
 		cleanups.push(fn);
 	}
-	function disable(reason) {
+	function stop(reason, notify) {
 		if (disabled) return;
 		disabled = true;
-		console.error("[Gate 合约助手] 已停用：", reason);
+		if (notify) console.error("[Gate 合约助手] 已停用：", reason);
 		cleanups.reverse().forEach((fn) => {
 			try {
 				fn();
 			} catch (e) {}
 		});
-		showBanner(reason);
+		if (notify) showBanner(reason);
 	}
+	var disable = (reason) => stop(reason, true);
+	var stopSilently = () => stop("", false);
 	function run(name, fn, onFail) {
 		if (disabled) return;
 		try {
+			const account = readAccountState();
+			if (account === "loggedOut") return stopSilently();
+			if (account !== "loggedIn") {
+				onFail?.();
+				accountPendingSince ??= Date.now();
+				if (Date.now() - accountPendingSince >= GRACE_MS) stopSilently();
+				return;
+			}
+			accountPendingSince = null;
 			fn();
 			delete failingSince[name];
 		} catch (e) {
@@ -155,8 +178,11 @@
 		return Object.entries(TARGETS).map(([key, { box, inner, revealOnSelf }]) => {
 			const blurred = `html.tm-blur-${key} ${box} ${inner}`;
 			return `
-${blurred} { filter: blur(6px); transition: filter .15s; }
-${revealOnSelf ? `${blurred}${SHOW}` : `html.tm-blur-${key} ${box}${SHOW} ${inner}`} { filter: none; transition: none; }`;
+${blurred} { opacity: 0; transition: opacity .15s; }
+${revealOnSelf ? `${blurred}${SHOW}` : `html.tm-blur-${key} ${box}${SHOW} ${inner}`} {
+  opacity: 1;
+  transition: none;
+}`;
 		}).join("\n") + `
 #${TOGGLES_ID} { display: flex; align-items: center; gap: 8px; font-size: 12px; white-space: nowrap;
   color: var(--color-text-text-secondary, #8d93a6); }
@@ -205,6 +231,54 @@ ${revealOnSelf ? `${blurred}${SHOW}` : `html.tm-blur-${key} ${box}${SHOW} ${inne
 		return Number.isFinite(v) ? v : NaN;
 	};
 	var decimalsOf = (s) => (String(s).split(".")[1] || "").replace(/\D.*$/, "").length;
+	var cache = new Map();
+	var requests = new Set();
+	var RETRY_MS = 3e4;
+	onCleanup(() => {
+		requests.forEach((request) => request.abort?.());
+		requests.clear();
+		cache.clear();
+	});
+	function readPublicData(url, ttl = 3e4) {
+		if (isDisabled()) return { status: "unavailable" };
+		const now = Date.now();
+		const old = cache.get(url);
+		if (old?.data && now - old.at < ttl) return {
+			status: "ready",
+			data: old.data
+		};
+		if (old?.loading) return { status: "loading" };
+		if (old?.failedAt && now - old.failedAt < RETRY_MS) return { status: "unavailable" };
+		const entry = { loading: true };
+		cache.set(url, entry);
+		let request;
+		const finish = (data) => {
+			requests.delete(request);
+			if (isDisabled() || cache.get(url) !== entry) return;
+			cache.set(url, data ? {
+				data,
+				at: Date.now()
+			} : { failedAt: Date.now() });
+		};
+		request = _GM_xmlhttpRequest({
+			method: "GET",
+			url,
+			anonymous: true,
+			timeout: 1e4,
+			onload: (response) => {
+				try {
+					finish(response.status >= 200 && response.status < 300 ? JSON.parse(response.responseText) : null);
+				} catch (_) {
+					finish(null);
+				}
+			},
+			onerror: () => finish(null),
+			ontimeout: () => finish(null),
+			onabort: () => finish(null)
+		});
+		if (entry === cache.get(url)) requests.add(request);
+		return { status: "loading" };
+	}
 	function getContract() {
 		let path;
 		try {
@@ -221,38 +295,15 @@ ${revealOnSelf ? `${blurred}${SHOW}` : `html.tm-blur-${key} ${box}${SHOW} ${inne
 			display: name.replace("_", "")
 		};
 	}
-	var RETRY_MS = 3e4;
-	var multiplierCache = {};
-	function getMultiplier(contract) {
-		const c = multiplierCache[contract];
-		if (typeof c === "number") return c;
-		if (c && (c.loading || Date.now() - c.failedAt < RETRY_MS)) return NaN;
-		multiplierCache[contract] = { loading: true };
-		const fail = () => multiplierCache[contract] = { failedAt: Date.now() };
-		_GM_xmlhttpRequest({
-			method: "GET",
-			url: CONTRACT_API + encodeURIComponent(contract),
-			timeout: 1e4,
-			onload: (r) => {
-				const v = (() => {
-					try {
-						return num(JSON.parse(r.responseText).quanto_multiplier);
-					} catch (e) {
-						return NaN;
-					}
-				})();
-				if (v > 0) multiplierCache[contract] = v;
-				else fail();
-			},
-			onerror: fail,
-			ontimeout: fail
-		});
-		return NaN;
-	}
+	var readContractDetails = (contract) => readPublicData(CONTRACT_API + encodeURIComponent(contract));
 	var isSupportedUnit = (unit, ctx) => !unit || unit === ctx.base || unit === "张";
 	function toCoin(qty, unit, ctx) {
 		if (!unit || unit === ctx.base) return qty;
-		if (unit === "张") return qty * getMultiplier(ctx.name);
+		if (unit === "张") {
+			const details = readContractDetails(ctx.name).data;
+			const multiplier = num(details?.quanto_multiplier);
+			return details?.name === ctx.name && multiplier > 0 ? qty * multiplier : NaN;
+		}
 		return NaN;
 	}
 	function readOrderForm() {
@@ -309,13 +360,53 @@ ${revealOnSelf ? `${blurred}${SHOW}` : `html.tm-blur-${key} ${box}${SHOW} ${inne
 			unit: unitEl.textContent.trim()
 		};
 	}
+	function parseMarginMode(text) {
+		const modes = [...String(text).matchAll(/全仓|逐仓|\bcross\b|\bisolated\b/gi)].map(([mode]) => /全仓|cross/i.test(mode) ? "cross" : "isolated");
+		const unique = [...new Set(modes)];
+		return unique.length === 1 ? unique[0] : null;
+	}
+	function fieldNumber(text) {
+		const value = String(text ?? "").trim().replace(/,/g, "");
+		return /^[+-]?\d+(?:\.\d+)?(?:\s|$|USDT)/i.test(value) ? num(value) : NaN;
+	}
+	function parsePositionRisk(modeText, marginText, liquidationText) {
+		return {
+			marginMode: parseMarginMode(modeText),
+			margin: fieldNumber(marginText),
+			liquidation: fieldNumber(liquidationText),
+			liquidationText: String(liquidationText || "").trim()
+		};
+	}
+	var isLiquidationLabel = (text) => /^(?:预估)?强平(?:价|价格)(?:\(USDT\))?$/.test(text.replace(/\s/g, "").replace(/（/g, "(").replace(/）/g, ")"));
+	var isMarginLabel = (text) => /^(?:仓位)?保证金(?:\(USDT\))?$/.test(text.replace(/\s/g, "").replace(/（/g, "(").replace(/）/g, ")"));
+	function parseOrderRisk(text) {
+		const leverages = [...String(text).matchAll(/(?:^|[^\d.])(\d+(?:\.\d+)?)\s*(?:[xX×]|倍)(?=$|[^a-zA-Z])/g)].map((m) => Number(m[1]));
+		return {
+			marginMode: parseMarginMode(text),
+			leverageLong: leverages.length === 1 || leverages.length === 2 ? leverages[0] : NaN,
+			leverageShort: leverages.length === 1 ? leverages[0] : leverages.length === 2 ? leverages[1] : NaN,
+			unsupported: /组合保证金|多币种保证金|跨币种保证金/.test(text)
+		};
+	}
+	function readOrderRisk(root) {
+		const panelSelector = `#${PANEL_ID}`;
+		const read = (node) => {
+			if (node.nodeType === 3) return node.textContent;
+			if (node.nodeType !== 1 || node.id === "tm-avg-preview") return "";
+			const style = getComputedStyle(node);
+			if (style.display === "none" || style.visibility === "hidden" || style.visibility === "collapse") return "";
+			if (!node.querySelector(panelSelector)) return node.innerText;
+			return [...node.childNodes].map(read).join("\n");
+		};
+		return parseOrderRisk(read(root));
+	}
 	var sideOf = (texts) => texts.includes("多") ? "long" : texts.includes("空") ? "short" : null;
 	function readPositions(ctx) {
 		const result = {
 			long: null,
 			short: null
 		};
-		const add = (where, name, side, sizeText, entryText) => {
+		const add = (where, name, side, sizeText, entryText, risk) => {
 			const entry = num(entryText);
 			const size = Math.abs(num(sizeText));
 			expect(name, `${where}中合约名未找到`);
@@ -324,18 +415,23 @@ ${revealOnSelf ? `${blurred}${SHOW}` : `html.tm-blur-${key} ${box}${SHOW} ${inne
 			expect(size > 0, `${where}中数量无法解析：“${sizeText}”`);
 			if (name !== ctx.display) return;
 			const unit = (sizeText.match(/[^\d.,\s-]+$/) || [""])[0];
+			expect(!result[side], `${where}中同方向有多个仓位，无法确认加仓归属`);
 			result[side] = {
 				entry,
 				entryText,
-				size: isSupportedUnit(unit, ctx) ? toCoin(size, unit, ctx) : NaN
+				size: isSupportedUnit(unit, ctx) ? toCoin(size, unit, ctx) : NaN,
+				...risk
 			};
 		};
 		document.querySelectorAll("table.position-table").forEach((table) => {
 			expect(table.querySelector("th.size") && table.querySelector("th.entry_price"), "仓位列表表头“数量/开仓均价”列未找到");
+			const headers = [...table.querySelectorAll("thead th")];
+			const liqIndex = headers.findIndex((th) => isLiquidationLabel(th.textContent));
+			const marginIndex = headers.findIndex((th) => isMarginLabel(th.textContent));
 			table.querySelectorAll("tbody tr").forEach((tr) => {
 				if (tr.cells.length <= 1) return;
 				const badges = [...tr.querySelectorAll(".mantine-Badge-label")].map((b) => b.textContent.trim());
-				add("仓位列表", tr.querySelector("td span.text-b10")?.textContent.replace(/\s/g, ""), sideOf(badges), expect(tr.querySelector("td.size"), "仓位列表中数量单元格 td.size 未找到").textContent.trim(), expect(tr.querySelector("td.entry_price"), "仓位列表中开仓均价单元格 td.entry_price 未找到").textContent.trim());
+				add("仓位列表", tr.querySelector("td span.text-b10")?.textContent.replace(/\s/g, ""), sideOf(badges), expect(tr.querySelector("td.size"), "仓位列表中数量单元格 td.size 未找到").textContent.trim(), expect(tr.querySelector("td.entry_price"), "仓位列表中开仓均价单元格 td.entry_price 未找到").textContent.trim(), parsePositionRisk(tr.innerText, tr.cells[marginIndex]?.innerText, tr.cells[liqIndex]?.innerText));
 			});
 		});
 		document.querySelectorAll("span.underline-dashed").forEach((label) => {
@@ -347,16 +443,16 @@ ${revealOnSelf ? `${blurred}${SHOW}` : `html.tm-blur-${key} ${box}${SHOW} ${inne
 			const lines = card.innerText.split("\n").map((s) => s.trim());
 			const qtyIdx = lines.indexOf("数量");
 			expect(qtyIdx > 0, "仓位卡片中“数量”标签未找到");
-			add("仓位卡片", lines[0], sideOf(lines.slice(0, qtyIdx)), lines[qtyIdx + 1] || "", lines[lines.indexOf("开仓均价") + 1] || "");
+			const field = (matches) => {
+				const index = lines.findIndex(matches);
+				return index >= 0 ? lines[index + 1] : "";
+			};
+			add("仓位卡片", lines[0], sideOf(lines.slice(0, qtyIdx)), lines[qtyIdx + 1] || "", lines[lines.indexOf("开仓均价") + 1] || "", parsePositionRisk(lines.slice(0, qtyIdx).join(" "), field(isMarginLabel), field(isLiquidationLabel)));
 		});
 		return result;
 	}
 	var STARTUP_TIMEOUT_MS = 2e4;
 	var POLL_MS = 500;
-	function isLoggedOut() {
-		const dealbox = document.querySelector(".dealbox");
-		return !!dealbox && [...dealbox.querySelectorAll("button")].some((b) => /^(登录|注册)$/.test(b.textContent.trim()));
-	}
 	function verifyStructure() {
 		const ctx = expect(getContract(), "无法从地址栏解析合约名");
 		readOrderForm();
@@ -364,13 +460,16 @@ ${revealOnSelf ? `${blurred}${SHOW}` : `html.tm-blur-${key} ${box}${SHOW} ${inne
 		verifyBlurStructure();
 	}
 	function startWhenReady(features) {
-		const deadline = Date.now() + STARTUP_TIMEOUT_MS;
+		const accountDeadline = Date.now() + STARTUP_TIMEOUT_MS;
+		let structureDeadline;
 		const id = setInterval(() => {
-			if (isLoggedOut()) {
-				clearInterval(id);
-				console.info("[Gate 合约助手] 未登录，脚本不启用");
+			const account = readAccountState();
+			if (account === "loggedOut") return stopSilently();
+			if (account !== "loggedIn") {
+				if (Date.now() >= accountDeadline) stopSilently();
 				return;
 			}
+			structureDeadline ??= Date.now() + STARTUP_TIMEOUT_MS;
 			try {
 				verifyStructure();
 			} catch (e) {
@@ -378,7 +477,7 @@ ${revealOnSelf ? `${blurred}${SHOW}` : `html.tm-blur-${key} ${box}${SHOW} ${inne
 					clearInterval(id);
 					return disable(`脚本异常：${e?.message || e}`);
 				}
-				if (Date.now() < deadline) return;
+				if (Date.now() < structureDeadline) return;
 				clearInterval(id);
 				return disable(e.message);
 			}
@@ -389,6 +488,147 @@ ${revealOnSelf ? `${blurred}${SHOW}` : `html.tm-blur-${key} ${box}${SHOW} ${inne
 				disable(`启动失败：${e?.message || e}`);
 			}
 		}, POLL_MS);
+		onCleanup(() => clearInterval(id));
+	}
+	function normalizeTiers(raw) {
+		if (!Array.isArray(raw) || !raw.length) return null;
+		const tiers = raw.map((tier) => ({
+			limit: Number.parseFloat(tier.risk_limit),
+			rate: Number.parseFloat(tier.maintenance_rate),
+			deduction: Number.parseFloat(tier.deduction),
+			leverageMax: Number.parseFloat(tier.leverage_max)
+		})).sort((a, b) => a.limit - b.limit);
+		let previous = {
+			limit: 0,
+			rate: 0,
+			deduction: 0
+		};
+		for (const tier of tiers) {
+			if (!Object.values(tier).every(Number.isFinite) || !(tier.limit > previous.limit && tier.rate >= previous.rate && tier.rate < 1 && tier.deduction >= 0 && tier.leverageMax >= 1)) return null;
+			const deduction = previous.deduction + previous.limit * (tier.rate - previous.rate);
+			if (Math.abs(tier.deduction - deduction) > Math.max(.01, deduction * 1e-8)) return null;
+			previous = tier;
+		}
+		return tiers;
+	}
+	function maintenanceMargin(value, tiers, fee) {
+		const tier = tiers.find((item) => value <= item.limit * (1 + 1e-12));
+		if (!tier || !(value >= 0)) return NaN;
+		return Math.max(0, value * tier.rate - tier.deduction) + value * fee;
+	}
+	function positionPnl(positions, price) {
+		return (positions.long ? positions.long.size * (price - positions.long.entry) : 0) + (positions.short ? positions.short.size * (positions.short.entry - price) : 0);
+	}
+	function hedgeMaintenance(positions, price, tiers, fee) {
+		const long = positions.long?.size || 0;
+		const short = positions.short?.size || 0;
+		return Math.max(maintenanceMargin(long * price, tiers, fee), maintenanceMargin(short * price, tiers, fee)) + Math.min(long, short) * price * fee;
+	}
+	function findBoundaries(positions, margin, market) {
+		const { tiers, fee, mark } = market;
+		const maxPrice = tiers[tiers.length - 1].limit / Math.max(positions.long?.size || 0, positions.short?.size || 0);
+		const balance = (price) => margin + positionPnl(positions, price) - hedgeMaintenance(positions, price, tiers, fee);
+		if (!(maxPrice >= mark)) return { notice: "仓位超出风险档位范围" };
+		if (!(balance(mark) > 0)) return { notice: "当前标记价已触及强平条件" };
+		const bisect = (a, b) => {
+			const positiveAtA = balance(a) > 0;
+			for (let i = 0; i < 64; i++) {
+				const mid = (a + b) / 2;
+				if (balance(mid) > 0 === positiveAtA) a = mid;
+				else b = mid;
+			}
+			return (a + b) / 2;
+		};
+		const lower = balance(0) < 0 ? bisect(0, mark) : null;
+		const upper = balance(maxPrice) <= 0 ? bisect(mark, maxPrice) : null;
+		return lower || upper ? {
+			lower,
+			upper
+		} : { notice: "风险档位内无强平价" };
+	}
+	var validPosition = (pos) => pos && Number.isFinite(pos.entry) && pos.entry > 0 && Number.isFinite(pos.size) && pos.size > 0;
+	var notice = (text) => ({ notice: text });
+	function estimateLiquidation({ positions, side, price, qty, settings, market }) {
+		const pos = positions[side];
+		if (!market || !validPosition(pos) || !Number.isFinite(qty) || !(qty > 0) || !Number.isFinite(price) || !(price > 0)) return notice("等待完整价格和数量");
+		if (settings.unsupported) return notice("暂不支持组合或多币种保证金");
+		if (!pos.marginMode || !settings.marginMode) return notice("未读取到保证金模式");
+		if (pos.marginMode !== settings.marginMode) return notice("下单与持仓保证金模式不一致");
+		const isolated = pos.marginMode === "isolated";
+		const current = {
+			long: null,
+			short: null
+		};
+		for (const direction of isolated ? [side] : ["long", "short"]) {
+			const item = positions[direction];
+			if (!item) continue;
+			if (!item.marginMode) return notice("另一方向的保证金模式不明");
+			if (item.marginMode !== pos.marginMode) continue;
+			if (!validPosition(item)) return notice("持仓数量换算中…");
+			current[direction] = item;
+		}
+		if (current.long && current.short) {
+			const a = current.long.liquidation;
+			const b = current.short.liquidation;
+			if (!(a > 0 && b > 0) || Math.abs(a - b) > Math.max(a, b) * 1e-5) return notice("双向全仓强平数据不一致");
+		}
+		let margin;
+		if (pos.liquidation > 0 && Number.isFinite(pos.liquidation)) margin = hedgeMaintenance(current, pos.liquidation, market.tiers, market.fee) - positionPnl(current, pos.liquidation);
+		else if (isolated && Number.isFinite(pos.margin) && pos.margin >= 0) margin = pos.margin;
+		else return notice("缺少当前强平价或逐仓保证金");
+		if (!Number.isFinite(margin)) return notice("当前强平价超出风险档位范围");
+		const notional = qty * price;
+		let explanation;
+		if (isolated) {
+			const leverage = side === "long" ? settings.leverageLong : settings.leverageShort;
+			if (!(Number.isFinite(leverage) && leverage >= 1)) return notice("未读取到当前杠杆");
+			const tier = market.tiers.find((item) => (pos.size + qty) * Math.max(price, market.mark) <= item.limit);
+			if (!tier || leverage > tier.leverageMax * (1 + 1e-8)) return notice("加仓规模超过当前杠杆档位");
+			const closeReserve = notional * market.fee * (side === "short" ? 1 + 1 / leverage : 1);
+			margin += notional / leverage + closeReserve;
+			explanation = "逐仓：保留原仓保证金，按当前杠杆追加初始保证金及预留平仓费。";
+		} else {
+			margin -= notional * market.fee;
+			explanation = "全仓：由当前强平价反推有效保证金，保持其他仓位当前盈亏和维持保证金不变，扣除新开仓费。";
+		}
+		return {
+			...findBoundaries({
+				...current,
+				[side]: {
+					size: pos.size + qty,
+					entry: (pos.size * pos.entry + notional) / (pos.size + qty)
+				}
+			}, margin, market),
+			explanation: `${explanation}假设本次按委托价全部成交，仅模拟当前方向的一笔加仓。按公开 Taker 费率 ${(market.fee * 100).toFixed(4)}% 近似，实际费率、成交、资金费及页面价格舍入可能造成差异。`
+		};
+	}
+	function readLiquidationData(ctx, form) {
+		const settings = readOrderRisk(form.dealbox.closest(".react-grid-item"));
+		const assetText = document.querySelector(".asset-container_new")?.innerText || "";
+		settings.unsupported ||= /组合保证金|多币种保证金|跨币种保证金/.test(assetText);
+		const details = readContractDetails(ctx.name);
+		const tiers = readPublicData(CONTRACT_API.replace(/contracts\/$/, "risk_limit_tiers?contract=") + encodeURIComponent(ctx.name));
+		const unavailable = [details.status, tiers.status].includes("unavailable");
+		if (details.status !== "ready" || tiers.status !== "ready") return {
+			settings,
+			notice: unavailable ? "行情接口暂不可用" : "读取风险参数中…"
+		};
+		const contract = details.data;
+		const normalized = normalizeTiers(tiers.data);
+		const fee = Number.parseFloat(contract.taker_fee_rate);
+		const mark = Number.parseFloat(contract.mark_price);
+		if (contract.name !== ctx.name || contract.type !== "direct" || !Number.isFinite(mark) || !(mark > 0) || !(fee >= 0 && fee < .1) || !normalized) return {
+			settings,
+			notice: "合约风险参数不完整"
+		};
+		return {
+			settings,
+			market: {
+				fee,
+				mark,
+				tiers: normalized
+			}
+		};
 	}
 	var getPanel = () => document.getElementById(PANEL_ID);
 	function hidePanel() {
@@ -428,6 +668,13 @@ ${revealOnSelf ? `${blurred}${SHOW}` : `html.tm-blur-${key} ${box}${SHOW} ${inne
 		const pct = (avg - pos.entry) / pos.entry * 100;
 		return row(left, `<span style="text-align:right;white-space:nowrap"><b style="color:var(--color-text-text-primary,inherit)">${avg.toFixed(digits)}</b> ${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%</span>`, `原均价 ${pos.entryText}`);
 	}
+	function renderLiquidationLine(label, color, result, digits) {
+		const left = `<span style="color:${color};white-space:nowrap">${label}后预估强平价</span>`;
+		const values = [result.lower, result.upper].filter((value) => Number.isFinite(value) && value > 0);
+		const value = values.length === 2 ? `↓ ${values[0].toFixed(digits)} / ↑ ${values[1].toFixed(digits)}` : values.length ? `≈ ${values[0].toFixed(digits)}` : "暂无法预估";
+		const title = [result.notice, result.explanation].filter(Boolean).join("；");
+		return row(left, `<span style="text-align:right">${esc(value)}</span>`, title) + (result.notice ? row(`<span style="font-size:11px">${esc(result.notice)}</span>`, "") : "");
+	}
 	var renderNotice = (text) => row(`<span>${esc(text)}</span>`, "");
 	var BUY_COLOR = "var(--color-function-trade-buy, #2ebd85)";
 	var SELL_COLOR = "var(--color-function-trade-sell, #f6465d)";
@@ -456,17 +703,29 @@ ${revealOnSelf ? `${blurred}${SHOW}` : `html.tm-blur-${key} ${box}${SHOW} ${inne
 		const showLong = pos.long && form.qtyLong > 0;
 		const showShort = pos.short && form.qtyShort > 0;
 		if (!showLong && !showShort) return hide();
+		const risk = readLiquidationData(ctx, form);
+		const preview = (side, qty) => risk.notice ? { notice: risk.notice } : estimateLiquidation({
+			positions: pos,
+			side,
+			price: form.price,
+			qty,
+			...risk
+		});
+		const liquidationLong = showLong ? preview("long", qtyLong) : null;
+		const liquidationShort = showShort ? preview("short", qtyShort) : null;
 		const key = JSON.stringify([
 			ctx.name,
 			form.price,
 			qtyLong,
 			qtyShort,
-			pos
+			pos,
+			liquidationLong,
+			liquidationShort
 		]);
 		const el = ensurePanel(form.dealbox, form.anchor);
 		el.style.display = "";
 		const digits = Math.min(Math.max(decimalsOf(form.priceStr), decimalsOf(pos.long?.entryText || ""), decimalsOf(pos.short?.entryText || "")) + 2, 10);
-		const html = (showLong ? renderLine("开多", BUY_COLOR, pos.long, form.price, qtyLong, digits) : "") + (showShort ? renderLine("开空", SELL_COLOR, pos.short, form.price, qtyShort, digits) : "");
+		const html = (showLong ? renderLine("开多", BUY_COLOR, pos.long, form.price, qtyLong, digits) + renderLiquidationLine("开多", BUY_COLOR, liquidationLong, digits) : "") + (showShort ? renderLine("开空", SELL_COLOR, pos.short, form.price, qtyShort, digits) + renderLiquidationLine("开空", SELL_COLOR, liquidationShort, digits) : "");
 		if (key !== lastKey) console.debug("[均价预估]", {
 			price: form.priceStr,
 			unit: form.unit,
@@ -478,7 +737,12 @@ ${revealOnSelf ? `${blurred}${SHOW}` : `html.tm-blur-${key} ${box}${SHOW} ${inne
 	}
 	function initAvgPreview() {
 		every("avgPreview", tick, 300, hide);
-		listen(document, "input", () => requestAnimationFrame(() => run("avgPreview", tick, hide)), true);
+		let frame;
+		listen(document, "input", () => {
+			cancelAnimationFrame(frame);
+			frame = requestAnimationFrame(() => run("avgPreview", tick, hide));
+		}, true);
+		onCleanup(() => cancelAnimationFrame(frame));
 	}
 	startWhenReady([initAvgPreview, initPrivacyBlur]);
 })();

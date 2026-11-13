@@ -9,7 +9,7 @@ export default defineConfig({
       userscript: {
         name: 'Gate 合约助手',
         namespace: 'http://tampermonkey.net/',
-        description: 'Gate USDT 永续合约：限价下单时预估开仓后的持仓均价',
+        description: 'Gate USDT 永续合约：登录后预估加仓均价与强平价，支持模块隐私模糊',
         author: 'zl',
         match: ['https://www.gate.com/*futures/USDT/*', 'https://www.gate.io/*futures/USDT/*'],
         // 数量单位为“张”时需要合约乘数，走公开行情接口
