@@ -13,7 +13,7 @@ export function readLiquidationData(ctx, form) {
   const tiers = readPublicData(CONTRACT_API.replace(/contracts\/$/, 'risk_limit_tiers?contract=') + encodeURIComponent(ctx.name));
   const unavailable = [details.status, tiers.status].includes('unavailable');
   if (details.status !== 'ready' || tiers.status !== 'ready') {
-    return { settings, notice: unavailable ? '行情接口暂不可用' : '读取风险参数中…' };
+    return { settings, loading: !unavailable, notice: unavailable ? '行情接口暂不可用' : '读取风险参数中…' };
   }
   const contract = details.data;
   const normalized = normalizeTiers(tiers.data);

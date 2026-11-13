@@ -611,6 +611,7 @@ ${revealOnSelf ? `${blurred}${SHOW}` : `html.tm-blur-${key} ${box}${SHOW} ${inne
 		const unavailable = [details.status, tiers.status].includes("unavailable");
 		if (details.status !== "ready" || tiers.status !== "ready") return {
 			settings,
+			loading: !unavailable,
 			notice: unavailable ? "行情接口暂不可用" : "读取风险参数中…"
 		};
 		const contract = details.data;
@@ -630,28 +631,170 @@ ${revealOnSelf ? `${blurred}${SHOW}` : `html.tm-blur-${key} ${box}${SHOW} ${inne
 			}
 		};
 	}
+	function calculateBreakEven({ long, short }) {
+		if (!long && !short) return { notice: "暂无持仓" };
+		if (!long || !short) return { price: (long || short).entry };
+		if (![long.size, short.size].every((size) => Number.isFinite(size) && size > 0)) return { notice: "换算中…" };
+		const netSize = long.size - short.size;
+		const netCost = long.size * long.entry - short.size * short.entry;
+		if (Math.abs(netSize) <= Math.max(long.size, short.size) * Number.EPSILON * 4) {
+			const entryTolerance = Math.max(long.entry, short.entry) * Number.EPSILON * 4;
+			if (Math.abs(long.entry - short.entry) <= entryTolerance) return { notice: "任意价格均平衡" };
+			return { notice: short.entry > long.entry ? "无平衡价（锁盈）" : "无平衡价（锁亏）" };
+		}
+		const price = netCost / netSize;
+		return Number.isFinite(price) && price > 0 ? { price } : { notice: "无正数平衡价" };
+	}
+	function estimateBreakEven({ positions, side, price, qty }) {
+		const pos = positions[side];
+		if (!pos || !Number.isFinite(price) || !(price > 0) || !Number.isFinite(pos.entry) || !(pos.entry > 0)) return { notice: "等待完整价格和数量" };
+		if (![pos.size, qty].every((size) => Number.isFinite(size) && size > 0)) return { notice: "换算中…" };
+		const size = pos.size + qty;
+		const entry = (pos.size * pos.entry + qty * price) / size;
+		if (!Number.isFinite(size) || !Number.isFinite(entry)) return { notice: "暂无法预估" };
+		return calculateBreakEven({
+			...positions,
+			[side]: {
+				size,
+				entry
+			}
+		});
+	}
+	var drag = null;
+	var resizeObserver;
+	var dragInitialized = false;
 	var getPanel = () => document.getElementById(PANEL_ID);
 	function hidePanel() {
+		stopDrag();
 		const panel = getPanel();
 		if (panel) panel.style.display = "none";
 	}
-	onCleanup(() => getPanel()?.remove());
-	function ensurePanel(dealbox, anchor) {
+	onCleanup(() => {
+		stopDrag();
+		resizeObserver?.disconnect();
+		getPanel()?.remove();
+	});
+	function movePanel(panel, left, top) {
+		const rect = panel.getBoundingClientRect();
+		const viewport = document.documentElement;
+		panel.style.left = `${Math.max(0, Math.min(left, viewport.clientWidth - rect.width))}px`;
+		panel.style.top = `${Math.max(0, Math.min(top, viewport.clientHeight - rect.height))}px`;
+		panel.style.right = "auto";
+	}
+	function keepPanelInViewport() {
+		const panel = getPanel();
+		if (!panel || panel.style.display === "none") return;
+		const { left, top } = panel.getBoundingClientRect();
+		movePanel(panel, left, top);
+	}
+	function stopDrag() {
+		if (!drag) return;
+		const { title, pointerId } = drag;
+		drag = null;
+		title.style.cursor = "grab";
+		if (title.hasPointerCapture(pointerId)) title.releasePointerCapture(pointerId);
+	}
+	function initDrag() {
+		if (dragInitialized) return;
+		dragInitialized = true;
+		listen(document, "pointerdown", (event) => {
+			const panel = getPanel();
+			const title = panel?.firstElementChild;
+			if (!title?.contains(event.target) || event.button !== 0 || drag) return;
+			const rect = panel.getBoundingClientRect();
+			title.setPointerCapture(event.pointerId);
+			drag = {
+				title,
+				pointerId: event.pointerId,
+				offsetX: event.clientX - rect.left,
+				offsetY: event.clientY - rect.top
+			};
+			title.style.cursor = "grabbing";
+			event.preventDefault();
+		});
+		listen(document, "pointermove", (event) => {
+			if (!drag || event.pointerId !== drag.pointerId) return;
+			const panel = getPanel();
+			if (!panel) return stopDrag();
+			movePanel(panel, event.clientX - drag.offsetX, event.clientY - drag.offsetY);
+		});
+		const endDrag = (event) => {
+			if (event.pointerId === drag?.pointerId) stopDrag();
+		};
+		listen(document, "pointerup", endDrag);
+		listen(document, "pointercancel", endDrag);
+		listen(document, "lostpointercapture", endDrag);
+		listen(window, "blur", stopDrag);
+		listen(window, "resize", keepPanelInViewport);
+		resizeObserver = new ResizeObserver(keepPanelInViewport);
+	}
+	function renderPanel(panel, html, status = "") {
+		panel.firstElementChild.lastElementChild.textContent = status;
+		panel.lastElementChild.innerHTML = html;
+	}
+	function ensurePanel() {
 		let panel = getPanel();
-		if (panel && panel.parentElement === dealbox && panel.nextElementSibling === anchor) return panel;
+		if (panel && panel.parentElement === document.body) return panel;
+		stopDrag();
 		panel?.remove();
 		panel = document.createElement("div");
 		panel.id = PANEL_ID;
 		panel.style.cssText = [
-			"margin:8px 0 4px",
-			"padding:6px 8px",
+			"position:fixed",
+			"top:0px",
+			"right:300px",
+			"z-index:2147483646",
+			"width:320px",
+			"max-width:100%",
+			"max-height:100vh",
+			"display:flex",
+			"flex-direction:column",
+			"box-sizing:border-box",
+			"padding:8px 12px",
 			"border-radius:6px",
+			"border:1px solid #697386",
 			"font-size:12px",
 			"line-height:20px",
-			"background:var(--color-cmpt-tag-gray, rgba(128,128,128,.12))",
+			"background:var(--color-bg-primary, #18191c)",
+			"color:var(--color-text-text-secondary, #8d93a6)",
+			"box-shadow:0 2px 12px rgba(0,0,0,.25)"
+		].join(";");
+		const title = document.createElement("div");
+		title.textContent = "合约助手";
+		title.title = "按住拖动面板";
+		title.style.cssText = [
+			"display:flex",
+			"justify-content:space-between",
+			"align-items:center",
+			"gap:8px",
+			"white-space:nowrap",
+			"flex-shrink:0",
+			"padding-bottom:6px",
+			"margin-bottom:6px",
+			"border-bottom:1px solid var(--color-line-border, #697386)",
+			"font-weight:600",
+			"color:var(--color-text-text-primary, #e8eaf0)",
+			"cursor:grab",
+			"user-select:none",
+			"touch-action:none"
+		].join(";");
+		const status = document.createElement("span");
+		status.style.cssText = [
+			"min-width:0",
+			"overflow:hidden",
+			"text-overflow:ellipsis",
+			"font-size:11px",
+			"font-weight:400",
 			"color:var(--color-text-text-secondary, #8d93a6)"
 		].join(";");
-		dealbox.insertBefore(panel, anchor);
+		title.append(status);
+		const content = document.createElement("div");
+		content.style.cssText = "min-height:0;overflow:auto";
+		panel.append(title, content);
+		document.body.appendChild(panel);
+		initDrag();
+		resizeObserver.disconnect();
+		resizeObserver.observe(panel);
 		return panel;
 	}
 	var esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({
@@ -661,19 +804,33 @@ ${revealOnSelf ? `${blurred}${SHOW}` : `html.tm-blur-${key} ${box}${SHOW} ${inne
 		"\"": "&quot;"
 	})[c]);
 	var row = (left, right, title = "") => `<div style="display:flex;justify-content:space-between;align-items:baseline;gap:6px" title="${esc(title)}">${left}${right}</div>`;
+	function renderBreakEvenResult(label, color, result, digits, title) {
+		const value = result.notice || result.price.toFixed(digits);
+		return row(`<span style="color:${color};white-space:nowrap">${label}</span>`, `<span style="text-align:right;white-space:nowrap"><b style="color:var(--color-text-text-primary,inherit)">${esc(value)}</b></span>`, title);
+	}
+	function renderBreakEvenLine(positions, digits) {
+		return renderBreakEvenResult("盈亏平衡价", "inherit", calculateBreakEven(positions), digits, "当前持仓合计未实现盈亏为零的价格，不含本次委托、手续费和资金费；等量多空持仓的合计盈亏不随价格变化");
+	}
+	function renderClosingBreakEvenLine(label, color, positions, side, price, qty, digits) {
+		return renderBreakEvenResult(`${label}后盈亏平衡价`, color, estimateBreakEven({
+			positions,
+			side,
+			price,
+			qty
+		}), digits, `假设本次${label}按委托价全部成交后，多空持仓以同一价格全部平仓时合计盈亏为零的价格，不含手续费和资金费；仅模拟当前方向的一笔加仓`);
+	}
 	function renderLine(label, color, pos, price, qty, digits) {
 		const left = `<span style="color:${color};white-space:nowrap">${label}后均价</span>`;
 		if (!Number.isFinite(pos.size) || !Number.isFinite(qty)) return row(left, "<span>换算中…</span>");
-		const avg = (pos.entry * pos.size + price * qty) / (pos.size + qty);
-		const pct = (avg - pos.entry) / pos.entry * 100;
-		return row(left, `<span style="text-align:right;white-space:nowrap"><b style="color:var(--color-text-text-primary,inherit)">${avg.toFixed(digits)}</b> ${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%</span>`, `原均价 ${pos.entryText}`);
+		return row(left, `<span style="text-align:right;white-space:nowrap"><b style="color:var(--color-text-text-primary,inherit)">${((pos.entry * pos.size + price * qty) / (pos.size + qty)).toFixed(digits)}</b></span>`, `原均价 ${pos.entryText}`);
 	}
-	function renderLiquidationLine(label, color, result, digits) {
+	function renderLiquidationLine(label, color, result, digits, followingLine = "") {
 		const left = `<span style="color:${color};white-space:nowrap">${label}后预估强平价</span>`;
 		const values = [result.lower, result.upper].filter((value) => Number.isFinite(value) && value > 0);
-		const value = values.length === 2 ? `↓ ${values[0].toFixed(digits)} / ↑ ${values[1].toFixed(digits)}` : values.length ? `≈ ${values[0].toFixed(digits)}` : "暂无法预估";
-		const title = [result.notice, result.explanation].filter(Boolean).join("；");
-		return row(left, `<span style="text-align:right">${esc(value)}</span>`, title) + (result.notice ? row(`<span style="font-size:11px">${esc(result.notice)}</span>`, "") : "");
+		const value = values.length === 2 ? `↓ ${values[0].toFixed(digits)} / ↑ ${values[1].toFixed(digits)}` : values.length ? `≈ ${values[0].toFixed(digits)}` : result.loading ? "—" : "暂无法预估";
+		const notice = result.loading ? "" : result.notice;
+		const title = [notice, result.explanation].filter(Boolean).join("；");
+		return row(left, `<span style="text-align:right">${esc(value)}</span>`, title) + followingLine + (notice ? row(`<span style="font-size:11px">${esc(notice)}</span>`, "") : "");
 	}
 	var renderNotice = (text) => row(`<span>${esc(text)}</span>`, "");
 	var BUY_COLOR = "var(--color-function-trade-buy, #2ebd85)";
@@ -683,18 +840,18 @@ ${revealOnSelf ? `${blurred}${SHOW}` : `html.tm-blur-${key} ${box}${SHOW} ${inne
 		hidePanel();
 		lastKey = "";
 	}
-	function render(el, key, html) {
-		if (key === lastKey && el.innerHTML) return;
+	function render(el, key, html, status = "") {
+		if (key === lastKey && el.lastElementChild.innerHTML) return;
 		lastKey = key;
-		el.innerHTML = html;
+		renderPanel(el, html, status);
 	}
 	function tick() {
 		const ctx = expect(getContract(), "无法从地址栏解析合约名");
 		const form = readOrderForm();
 		if (!form.isOpen || !(form.price > 0) || !(form.qtyLong > 0 || form.qtyShort > 0)) return hide();
 		if (!isSupportedUnit(form.unit, ctx)) {
-			const el = ensurePanel(form.dealbox, form.anchor);
-			el.style.display = "";
+			const el = ensurePanel();
+			el.style.display = "flex";
 			return render(el, `unit:${form.unit}`, renderNotice(`数量单位为 ${form.unit} 时不预估均价`));
 		}
 		const pos = readPositions(ctx);
@@ -704,7 +861,10 @@ ${revealOnSelf ? `${blurred}${SHOW}` : `html.tm-blur-${key} ${box}${SHOW} ${inne
 		const showShort = pos.short && form.qtyShort > 0;
 		if (!showLong && !showShort) return hide();
 		const risk = readLiquidationData(ctx, form);
-		const preview = (side, qty) => risk.notice ? { notice: risk.notice } : estimateLiquidation({
+		const preview = (side, qty) => risk.notice ? {
+			notice: risk.notice,
+			loading: risk.loading
+		} : estimateLiquidation({
 			positions: pos,
 			side,
 			price: form.price,
@@ -722,10 +882,10 @@ ${revealOnSelf ? `${blurred}${SHOW}` : `html.tm-blur-${key} ${box}${SHOW} ${inne
 			liquidationLong,
 			liquidationShort
 		]);
-		const el = ensurePanel(form.dealbox, form.anchor);
-		el.style.display = "";
+		const el = ensurePanel();
+		el.style.display = "flex";
 		const digits = Math.min(Math.max(decimalsOf(form.priceStr), decimalsOf(pos.long?.entryText || ""), decimalsOf(pos.short?.entryText || "")) + 2, 10);
-		const html = (showLong ? renderLine("开多", BUY_COLOR, pos.long, form.price, qtyLong, digits) + renderLiquidationLine("开多", BUY_COLOR, liquidationLong, digits) : "") + (showShort ? renderLine("开空", SELL_COLOR, pos.short, form.price, qtyShort, digits) + renderLiquidationLine("开空", SELL_COLOR, liquidationShort, digits) : "");
+		const html = renderBreakEvenLine(pos, digits) + (showLong ? renderLine("开多", BUY_COLOR, pos.long, form.price, qtyLong, digits) + renderLiquidationLine("开多", BUY_COLOR, liquidationLong, digits, renderClosingBreakEvenLine("开多", BUY_COLOR, pos, "long", form.price, qtyLong, digits)) : "") + (showShort ? renderLine("开空", SELL_COLOR, pos.short, form.price, qtyShort, digits) + renderLiquidationLine("开空", SELL_COLOR, liquidationShort, digits, renderClosingBreakEvenLine("开空", SELL_COLOR, pos, "short", form.price, qtyShort, digits)) : "");
 		if (key !== lastKey) console.debug("[均价预估]", {
 			price: form.priceStr,
 			unit: form.unit,
@@ -733,7 +893,7 @@ ${revealOnSelf ? `${blurred}${SHOW}` : `html.tm-blur-${key} ${box}${SHOW} ${inne
 			qtyShort,
 			pos
 		});
-		render(el, key, html);
+		render(el, key, html, risk.loading ? risk.notice : "");
 	}
 	function initAvgPreview() {
 		every("avgPreview", tick, 300, hide);

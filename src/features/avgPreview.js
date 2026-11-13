@@ -4,7 +4,7 @@ import { getContract, isSupportedUnit, toCoin } from '../gate/contract.js';
 import { readOrderForm } from '../gate/orderForm.js';
 import { readPositions } from '../gate/positions.js';
 import { readLiquidationData } from '../gate/liquidationData.js';
-import { ensurePanel, hidePanel, renderLine, renderLiquidationLine, renderNotice } from '../ui/avgPanel.js';
+import { ensurePanel, hidePanel, renderPanel, renderBreakEvenLine, renderClosingBreakEvenLine, renderLine, renderLiquidationLine, renderNotice } from '../ui/avgPanel.js';
 import { decimalsOf } from '../utils/number.js';
 import { estimateLiquidation } from '../utils/liquidation.js';
 
@@ -18,10 +18,10 @@ function hide() {
   lastKey = '';
 }
 
-function render(el, key, html) {
-  if (key === lastKey && el.innerHTML) return;
+function render(el, key, html, status = '') {
+  if (key === lastKey && el.lastElementChild.innerHTML) return;
   lastKey = key;
-  el.innerHTML = html;
+  renderPanel(el, html, status);
 }
 
 // 先完整读取并校验页面结构，全部通过后才写 DOM：
@@ -33,8 +33,8 @@ function tick() {
   if (!form.isOpen || !(form.price > 0) || !(form.qtyLong > 0 || form.qtyShort > 0)) return hide();
 
   if (!isSupportedUnit(form.unit, ctx)) {
-    const el = ensurePanel(form.dealbox, form.anchor);
-    el.style.display = '';
+    const el = ensurePanel();
+    el.style.display = 'flex';
     return render(el, `unit:${form.unit}`, renderNotice(`数量单位为 ${form.unit} 时不预估均价`));
   }
 
@@ -48,7 +48,7 @@ function tick() {
   // 没有可预估的方向时整个面板不显示，不留空白占位
   if (!showLong && !showShort) return hide();
   const risk = readLiquidationData(ctx, form);
-  const preview = (side, qty) => risk.notice ? { notice: risk.notice } : estimateLiquidation({
+  const preview = (side, qty) => risk.notice ? { notice: risk.notice, loading: risk.loading } : estimateLiquidation({
     positions: pos, side, price: form.price, qty, ...risk,
   });
   const liquidationLong = showLong ? preview('long', qtyLong) : null;
@@ -56,8 +56,8 @@ function tick() {
   const key = JSON.stringify([ctx.name, form.price, qtyLong, qtyShort, pos, liquidationLong, liquidationShort]);
 
   // 以下开始写 DOM
-  const el = ensurePanel(form.dealbox, form.anchor);
-  el.style.display = '';
+  const el = ensurePanel();
+  el.style.display = 'flex';
 
   // 均价多给 2 位小数，避免小额加仓时看不出变化
   const digits = Math.min(
@@ -65,13 +65,18 @@ function tick() {
     10
   );
   const html =
-    (showLong ? renderLine('开多', BUY_COLOR, pos.long, form.price, qtyLong, digits) + renderLiquidationLine('开多', BUY_COLOR, liquidationLong, digits) : '') +
-    (showShort ? renderLine('开空', SELL_COLOR, pos.short, form.price, qtyShort, digits) + renderLiquidationLine('开空', SELL_COLOR, liquidationShort, digits) : '');
+    renderBreakEvenLine(pos, digits) +
+    (showLong ? renderLine('开多', BUY_COLOR, pos.long, form.price, qtyLong, digits) +
+      renderLiquidationLine('开多', BUY_COLOR, liquidationLong, digits,
+        renderClosingBreakEvenLine('开多', BUY_COLOR, pos, 'long', form.price, qtyLong, digits)) : '') +
+    (showShort ? renderLine('开空', SELL_COLOR, pos.short, form.price, qtyShort, digits) +
+      renderLiquidationLine('开空', SELL_COLOR, liquidationShort, digits,
+        renderClosingBreakEvenLine('开空', SELL_COLOR, pos, 'short', form.price, qtyShort, digits)) : '');
   if (key !== lastKey) {
     // 页面结构随 Gate 改版会变，出问题时在控制台看实际读到的值最快定位
     console.debug('[均价预估]', { price: form.priceStr, unit: form.unit, qtyLong, qtyShort, pos });
   }
-  render(el, key, html);
+  render(el, key, html, risk.loading ? risk.notice : '');
 }
 
 export function initAvgPreview() {
