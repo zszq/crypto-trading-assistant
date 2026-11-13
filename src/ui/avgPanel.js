@@ -94,9 +94,9 @@ export function ensurePanel() {
   panel.style.cssText = [
     'position:fixed',
     'top:100px',
-    'right:300px',
+    'right:310px',
     'z-index:2147483646',
-    'width:310px',
+    'width:300px',
     'max-width:100%',
     'max-height:100vh',
     'display:flex',
