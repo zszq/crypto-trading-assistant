@@ -164,7 +164,7 @@ function renderBreakEvenResult(label, color, result, title) {
 }
 
 export function renderBreakEvenLine(positions) {
-  return renderBreakEvenResult('盈亏平衡价', 'inherit', calculateBreakEven(positions),
+  return renderBreakEvenResult('当前盈亏平衡价', 'inherit', calculateBreakEven(positions),
     '当前持仓合计未实现盈亏为零的价格，不含本次委托、手续费和资金费；等量多空持仓的合计盈亏不随价格变化');
 }
 

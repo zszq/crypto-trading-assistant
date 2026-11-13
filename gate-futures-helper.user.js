@@ -1285,7 +1285,7 @@ ${revealOnSelf ? `${blurred}${SHOW}` : `html.tm-blur-${key} ${box}${SHOW} ${inne
 		return row(`<span style="color:${color};white-space:nowrap">${label}</span>`, `<span style="text-align:right;white-space:nowrap"><b style="color:var(--color-text-text-primary,inherit)">${esc(value)}</b></span>`, title);
 	}
 	function renderBreakEvenLine(positions) {
-		return renderBreakEvenResult("盈亏平衡价", "inherit", calculateBreakEven(positions), "当前持仓合计未实现盈亏为零的价格，不含本次委托、手续费和资金费；等量多空持仓的合计盈亏不随价格变化");
+		return renderBreakEvenResult("当前盈亏平衡价", "inherit", calculateBreakEven(positions), "当前持仓合计未实现盈亏为零的价格，不含本次委托、手续费和资金费；等量多空持仓的合计盈亏不随价格变化");
 	}
 	function renderClosingBreakEvenLine(label, color, positions, side, price, qty) {
 		return renderBreakEvenResult(`${label}后盈亏平衡价`, color, estimateBreakEven({
@@ -1360,7 +1360,7 @@ ${revealOnSelf ? `${blurred}${SHOW}` : `html.tm-blur-${key} ${box}${SHOW} ${inne
 		]);
 		const el = ensurePanel();
 		el.style.display = "flex";
-		const html = renderBreakEvenLine(pos) + (showLong ? renderLine("开多", BUY_COLOR, pos.long, form.price, qtyLong) + renderLiquidationLine("开多", BUY_COLOR, liquidationLong, renderClosingBreakEvenLine("开多", BUY_COLOR, pos, "long", form.price, qtyLong)) : "") + (showShort ? renderLine("开空", SELL_COLOR, pos.short, form.price, qtyShort) + renderLiquidationLine("开空", SELL_COLOR, liquidationShort, renderClosingBreakEvenLine("开空", SELL_COLOR, pos, "short", form.price, qtyShort)) : "");
+		const html = renderBreakEvenLine(pos) + (showLong ? renderLine("开多", BUY_COLOR, pos.long, form.price, qtyLong) + renderLiquidationLine("开多", BUY_COLOR, liquidationLong, renderClosingBreakEvenLine("开多", "inherit", pos, "long", form.price, qtyLong)) : "") + (showShort ? renderLine("开空", SELL_COLOR, pos.short, form.price, qtyShort) + renderLiquidationLine("开空", SELL_COLOR, liquidationShort, renderClosingBreakEvenLine("开空", "inherit", pos, "short", form.price, qtyShort)) : "");
 		if (key !== lastKey) console.debug("[均价预估]", {
 			price: form.priceStr,
 			unit: form.unit,

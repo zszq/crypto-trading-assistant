@@ -64,7 +64,7 @@ test('不显示无法换算、非正数的平衡价格', () => {
 
 test('盈亏平衡价行按统一规则显示，并说明当前持仓与费用口径', () => {
   const html = renderBreakEvenLine({ long: position(3, 100), short: position(1, 120) });
-  assert.match(html, /盈亏平衡价/);
+  assert.match(html, />当前盈亏平衡价<\/span>/);
   assert.match(html, />90<\/b>/);
   assert.match(html, /不含本次委托、手续费和资金费/);
   const pending = renderBreakEvenLine({ long: position(NaN, 100), short: position(1, 120) });

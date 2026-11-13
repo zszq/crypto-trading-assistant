@@ -63,10 +63,10 @@ function tick() {
     renderBreakEvenLine(pos) +
     (showLong ? renderLine('开多', BUY_COLOR, pos.long, form.price, qtyLong) +
       renderLiquidationLine('开多', BUY_COLOR, liquidationLong,
-        renderClosingBreakEvenLine('开多', BUY_COLOR, pos, 'long', form.price, qtyLong)) : '') +
+        renderClosingBreakEvenLine('开多', 'inherit', pos, 'long', form.price, qtyLong)) : '') +
     (showShort ? renderLine('开空', SELL_COLOR, pos.short, form.price, qtyShort) +
       renderLiquidationLine('开空', SELL_COLOR, liquidationShort,
-        renderClosingBreakEvenLine('开空', SELL_COLOR, pos, 'short', form.price, qtyShort)) : '');
+        renderClosingBreakEvenLine('开空', 'inherit', pos, 'short', form.price, qtyShort)) : '');
   if (key !== lastKey) {
     // 页面结构随 Gate 改版会变，出问题时在控制台看实际读到的值最快定位
     console.debug('[均价预估]', { price: form.priceStr, unit: form.unit, qtyLong, qtyShort, pos });
