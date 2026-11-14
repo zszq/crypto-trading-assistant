@@ -3,6 +3,7 @@ import { getContract } from '../gate/contract.js';
 import { readOrderForm } from '../gate/orderForm.js';
 import { readPositions } from '../gate/positions.js';
 import { readAccountState } from '../gate/account.js';
+import { readUnrealizedPnl } from '../gate/unrealizedPnl.js';
 import { disable, expect, onCleanup, stopSilently, StructureError } from './guard.js';
 
 // 页面是异步渲染的，启动时最多等这么久让结构就绪；超时仍不对应则判定为改版
@@ -15,6 +16,7 @@ function verifyStructure() {
   readOrderForm();
   readPositions(ctx);
   verifyBlurStructure();
+  readUnrealizedPnl();
 }
 
 export function startWhenReady(features) {

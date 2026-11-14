@@ -3,7 +3,7 @@
 // @namespace    http://tampermonkey.net/
 // @version      1.7.0
 // @author       zl
-// @description  Gate USDT 永续合约：登录后预估加仓均价与强平价，支持模块隐私模糊
+// @description  Gate USDT 永续合约：登录后预估加仓均价与强平价，支持亏损提醒和模块隐私模糊
 // @match        https://www.gate.com/*futures/USDT/*
 // @match        https://www.gate.io/*futures/USDT/*
 // @connect      api.gateio.ws
@@ -17,11 +17,11 @@
 	var _GM_getValue = (() => typeof GM_getValue != "undefined" ? GM_getValue : void 0)();
 	var _GM_setValue = (() => typeof GM_setValue != "undefined" ? GM_setValue : void 0)();
 	var _GM_xmlhttpRequest = (() => typeof GM_xmlhttpRequest != "undefined" ? GM_xmlhttpRequest : void 0)();
-	var BANNER_ID = "tm-gate-helper-banner";
+	var BANNER_ID$1 = "tm-gate-helper-banner";
 	function showBanner(reason) {
-		if (document.getElementById(BANNER_ID)) return;
+		if (document.getElementById(BANNER_ID$1)) return;
 		const bar = document.createElement("div");
-		bar.id = BANNER_ID;
+		bar.id = BANNER_ID$1;
 		bar.style.cssText = [
 			"position:fixed",
 			"top:0",
@@ -901,6 +901,15 @@ ${revealOnSelf ? `${blurred}${SHOW}` : `html.tm-blur-${key} ${box}${SHOW} ${inne
 		});
 		return result;
 	}
+	function readUnrealizedPnl() {
+		const labels = [...document.querySelectorAll(".asset-container_new span.underline-dotted")].filter((label) => label.textContent.trim() === "未实现盈亏");
+		expect(labels.length === 1, `资产区“未实现盈亏”应有 1 个，实际 ${labels.length} 个`);
+		const values = labels[0].parentElement.querySelectorAll(".order-right-trans-container");
+		expect(values.length === 1, "未实现盈亏数值容器应有 1 个");
+		const text = values[0].textContent.trim().replace(/−/g, "-");
+		expect(/^[+-]?(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d+)?\s*USDT$/.test(text), "未实现盈亏不是有效的 USDT 金额");
+		return num(text.replace(/^\+/, ""));
+	}
 	var STARTUP_TIMEOUT_MS = 2e4;
 	var POLL_MS = 500;
 	function verifyStructure() {
@@ -908,6 +917,7 @@ ${revealOnSelf ? `${blurred}${SHOW}` : `html.tm-blur-${key} ${box}${SHOW} ${inne
 		readOrderForm();
 		readPositions(ctx);
 		verifyBlurStructure();
+		readUnrealizedPnl();
 	}
 	function startWhenReady(features) {
 		const accountDeadline = Date.now() + STARTUP_TIMEOUT_MS;
@@ -1321,7 +1331,7 @@ ${revealOnSelf ? `${blurred}${SHOW}` : `html.tm-blur-${key} ${box}${SHOW} ${inne
 		lastKey = key;
 		renderPanel(el, html, status);
 	}
-	function tick() {
+	function tick$1() {
 		const ctx = expect(getContract(), "无法从地址栏解析合约名");
 		const form = readOrderForm();
 		if (!form.isOpen || !isPositive(form.price) || !(isPositive(form.qtyLong) || isPositive(form.qtyShort))) return hide();
@@ -1371,13 +1381,59 @@ ${revealOnSelf ? `${blurred}${SHOW}` : `html.tm-blur-${key} ${box}${SHOW} ${inne
 		render(el, key, html, risk.loading ? risk.notice : "");
 	}
 	function initAvgPreview() {
-		every("avgPreview", tick, 300, hide);
+		every("avgPreview", tick$1, 300, hide);
 		let frame;
 		listen(document, "input", () => {
 			cancelAnimationFrame(frame);
-			frame = requestAnimationFrame(() => run("avgPreview", tick, hide));
+			frame = requestAnimationFrame(() => run("avgPreview", tick$1, hide));
 		}, true);
 		onCleanup(() => cancelAnimationFrame(frame));
 	}
-	startWhenReady([initAvgPreview, initPrivacyBlur]);
+	var BANNER_ID = "tm-gate-loss-alert";
+	function hideLossBanner() {
+		document.getElementById(BANNER_ID)?.remove();
+	}
+	function showLossBanner() {
+		if (document.getElementById(BANNER_ID)) return;
+		const bar = document.createElement("div");
+		bar.id = BANNER_ID;
+		bar.setAttribute("role", "alert");
+		bar.style.cssText = [
+			"position:fixed",
+			"top:0",
+			"left:0",
+			"right:0",
+			"z-index:2147483647",
+			"box-sizing:border-box",
+			"padding:6px 12px",
+			"background:#d9304f",
+			"color:#fff",
+			"font-size:13px",
+			"font-weight:600",
+			"line-height:20px",
+			"text-align:center",
+			"box-shadow:0 2px 8px rgba(0,0,0,.25)",
+			"pointer-events:auto"
+		].join(";");
+		bar.textContent = `⚠ 所有仓位未实现亏损已超过 100 USDT，机会很多，注意止损！`;
+		const emphasis = document.createElement("strong");
+		emphasis.textContent = "（只做确定性高的的行情！）";
+		emphasis.style.cssText = "color:#ffff00;font-weight:800";
+		bar.appendChild(emphasis);
+		document.documentElement.appendChild(bar);
+	}
+	function tick() {
+		if (readUnrealizedPnl().lt(-100)) showLossBanner();
+		else hideLossBanner();
+	}
+	function initLossAlert() {
+		onCleanup(hideLossBanner);
+		every("lossAlert", tick, 300, hideLossBanner);
+		run("lossAlert", tick, hideLossBanner);
+	}
+	startWhenReady([
+		initAvgPreview,
+		initPrivacyBlur,
+		initLossAlert
+	]);
 })();
