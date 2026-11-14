@@ -37,8 +37,8 @@ const TARGETS = {
     inner: '.scroll-table-bottom-box > :last-child:not(:first-child)',
     revealOnSelf: true,
   },
-  // 标题栏和拖拽区保持清晰，便于认出模块、拖动布局
-  assets: { box: ASSETS, inner: '.asset-container_new > :not(.rgl-drag-zone):not(.assets-title)' },
+  // 隐藏整个资产容器，避免标题、拖拽区和底部按钮仍然可见。
+  assets: { box: ASSETS, inner: '.asset-container_new' },
   // 单独隐藏整行内容，保留行本身的命中区域；悬停其他下单控件时不会露出余额。
   available: { box: AVAILABLE, inner: '> *' },
 };

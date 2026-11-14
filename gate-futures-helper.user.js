@@ -159,7 +159,7 @@
 		},
 		assets: {
 			box: ASSETS,
-			inner: ".asset-container_new > :not(.rgl-drag-zone):not(.assets-title)"
+			inner: ".asset-container_new"
 		},
 		available: {
 			box: AVAILABLE,

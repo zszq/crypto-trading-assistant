@@ -44,7 +44,7 @@ test('浮动面板：标题拖拽限制四边，刷新保留标题，缩窗及�
         const height = Math.min(this.height, viewport.clientHeight);
         return {
           width, height,
-          left: this.style.left === undefined ? viewport.clientWidth - 300 - width : Number.parseFloat(this.style.left),
+          left: this.style.left === undefined ? viewport.clientWidth - Number.parseFloat(this.style.right) - width : Number.parseFloat(this.style.left),
           top: Number.parseFloat(this.style.top),
         };
       },
@@ -75,8 +75,8 @@ test('浮动面板：标题拖拽限制四边，刷新保留标题，缩窗及�
     const title = panel.firstElementChild;
     assert.equal(title.textContent, '合约助手');
     assert.equal(panel.style.border, '1px solid #697386');
-    assert.equal(panel.style.top, '0px');
-    assert.equal(panel.style.right, '300px');
+    assert.equal(panel.style.top, '100px');
+    assert.equal(panel.style.right, '310px');
     assert.equal(ensurePanel(), panel, '轮询不重复创建面板或监听');
     const start = (target = title, button = 0) => {
       const rect = panel.getBoundingClientRect();
@@ -112,17 +112,17 @@ test('浮动面板：标题拖拽限制四边，刷新保留标题，缩窗及�
     assert.equal(panel.style.left, '0px');
     assert.equal(panel.style.top, '0px');
     move(5000, 5000);
-    assert.equal(panel.style.left, '880px');
+    assert.equal(panel.style.left, '900px');
     assert.equal(panel.style.top, '640px');
     document.emit('pointerup', { pointerId: 1 });
     assert.equal(title.captured, null);
     move(50, 50);
-    assert.equal(panel.style.left, '880px', '松手后停止拖拽');
+    assert.equal(panel.style.left, '900px', '松手后停止拖拽');
 
     viewport.clientWidth = 500;
     viewport.clientHeight = 300;
     window.emit('resize');
-    assert.equal(panel.style.left, '180px');
+    assert.equal(panel.style.left, '200px');
     assert.equal(panel.style.top, '140px');
     panel.height = 250;
     observer.callback();
