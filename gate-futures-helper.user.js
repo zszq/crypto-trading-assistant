@@ -1296,7 +1296,7 @@ ${revealOnSelf ? `${hidden}${SHOW}` : `html.tm-hide-${key} ${box}${SHOW} ${inner
 	var row = (left, right, title = "") => `<div style="display:flex;justify-content:space-between;align-items:baseline;gap:6px" title="${esc(title)}">${left}${right}</div>`;
 	function renderBreakEvenResult(label, color, result, title) {
 		const value = result.notice || formatPrice(result.price);
-		return row(`<span style="color:${color};white-space:nowrap">${label}</span>`, `<span style="text-align:right;white-space:nowrap"><b style="color:var(--color-text-text-primary,inherit)">${esc(value)}</b></span>`, title);
+		return row(`<span style="color:${color};white-space:nowrap">${label}</span>`, `<span style="color:${color};text-align:right;white-space:nowrap">${esc(value)}</span>`, title);
 	}
 	function renderBreakEvenLine(positions) {
 		return renderBreakEvenResult("当前盈亏平衡价", "inherit", calculateBreakEven(positions), "当前持仓合计未实现盈亏为零的价格，不含本次委托、手续费和资金费；等量多空持仓的合计盈亏不随价格变化");
@@ -1312,7 +1312,7 @@ ${revealOnSelf ? `${hidden}${SHOW}` : `html.tm-hide-${key} ${box}${SHOW} ${inner
 	function renderLine(label, color, pos, price, qty) {
 		const left = `<span style="color:${color};white-space:nowrap">${label}后均价</span>`;
 		if (!isPositive(pos.size) || !isPositive(qty)) return row(left, "<span>换算中…</span>");
-		return row(left, `<span style="text-align:right;white-space:nowrap"><b style="color:var(--color-text-text-primary,inherit)">${formatPrice(weightedEntry(pos, price, qty))}</b></span>`, `原均价 ${formatPrice(pos.entry)}`);
+		return row(left, `<span style="text-align:right;white-space:nowrap;color:var(--color-text-text-primary,inherit)">${formatPrice(weightedEntry(pos, price, qty))}</span>`, `原均价 ${formatPrice(pos.entry)}`);
 	}
 	function renderLiquidationLine(label, color, result, followingLine = "") {
 		const left = `<span style="color:${color};white-space:nowrap">${label}后预估强平价</span>`;
@@ -1320,7 +1320,7 @@ ${revealOnSelf ? `${hidden}${SHOW}` : `html.tm-hide-${key} ${box}${SHOW} ${inner
 		const value = values.length === 2 ? `↓ ${formatPrice(values[0])} / ↑ ${formatPrice(values[1])}` : values.length ? `≈ ${formatPrice(values[0])}` : result.loading ? "—" : "暂无法预估";
 		const notice = result.loading ? "" : result.notice;
 		const title = [notice, result.explanation].filter(Boolean).join("；");
-		return row(left, `<span style="text-align:right">${esc(value)}</span>`, title) + followingLine + (notice ? row(`<span style="font-size:11px">${esc(notice)}</span>`, "") : "");
+		return row(left, `<span style="text-align:right;color:var(--color-text-text-primary,inherit)">${esc(value)}</span>`, title) + followingLine + (notice ? row(`<span style="font-size:11px">${esc(notice)}</span>`, "") : "");
 	}
 	var renderNotice = (text) => row(`<span>${esc(text)}</span>`, "");
 	var BUY_COLOR = "var(--color-function-trade-buy, #2ebd85)";

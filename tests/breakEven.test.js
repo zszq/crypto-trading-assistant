@@ -65,7 +65,7 @@ test('不显示无法换算、非正数的平衡价格', () => {
 test('盈亏平衡价行按统一规则显示，并说明当前持仓与费用口径', () => {
   const html = renderBreakEvenLine({ long: position(3, 100), short: position(1, 120) });
   assert.match(html, />当前盈亏平衡价<\/span>/);
-  assert.match(html, />90<\/b>/);
+  assert.match(html, />90<\/span>/);
   assert.match(html, /不含本次委托、手续费和资金费/);
   const pending = renderBreakEvenLine({ long: position(NaN, 100), short: position(1, 120) });
   assert.match(pending, /换算中…/);
@@ -100,7 +100,7 @@ test('对应平仓价紧跟强平价，强平价不可用时仍显示独立计�
   for (const [side, label] of [['long', '开多'], ['short', '开空']]) {
     const closingLine = renderClosingBreakEvenLine(label, '#123456', { [side]: position(2, 100) }, side, 130, 1);
     const html = renderLiquidationLine(label, '#123456', { notice: '行情接口暂不可用' }, closingLine);
-    assert.match(closingLine, />110<\/b>/);
+    assert.match(closingLine, />110<\/span>/);
     assert.match(closingLine, /同一价格全部平仓/);
     assert.match(closingLine, /不含手续费和资金费/);
     const rows = html.match(/<div\b[^>]*>.*?<\/div>/g);

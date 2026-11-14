@@ -159,7 +159,7 @@ const row = (left, right, title = '') =>
 function renderBreakEvenResult(label, color, result, title) {
   const value = result.notice || formatPrice(result.price);
   const left = `<span style="color:${color};white-space:nowrap">${label}</span>`;
-  const right = `<span style="text-align:right;white-space:nowrap"><b style="color:var(--color-text-text-primary,inherit)">${esc(value)}</b></span>`;
+  const right = `<span style="color:${color};text-align:right;white-space:nowrap">${esc(value)}</span>`;
   return row(left, right, title);
 }
 
@@ -178,7 +178,7 @@ export function renderLine(label, color, pos, price, qty) {
   // “张”要等合约乘数接口返回
   if (!isPositive(pos.size) || !isPositive(qty)) return row(left, '<span>换算中…</span>');
   const avg = weightedEntry(pos, price, qty);
-  const right = `<span style="text-align:right;white-space:nowrap"><b style="color:var(--color-text-text-primary,inherit)">${formatPrice(avg)}</b></span>`;
+  const right = `<span style="text-align:right;white-space:nowrap;color:var(--color-text-text-primary,inherit)">${formatPrice(avg)}</span>`;
   return row(left, right, `原均价 ${formatPrice(pos.entry)}`);
 }
 
@@ -191,7 +191,7 @@ export function renderLiquidationLine(label, color, result, followingLine = '') 
   // 加载提示放在固定高度的标题栏，数据区保留强平价行，避免请求刷新时反复增减行数。
   const notice = result.loading ? '' : result.notice;
   const title = [notice, result.explanation].filter(Boolean).join('；');
-  const right = `<span style="text-align:right">${esc(value)}</span>`;
+  const right = `<span style="text-align:right;color:var(--color-text-text-primary,inherit)">${esc(value)}</span>`;
   // 强平价的错误说明放在价格行之后，让对应的平仓价始终紧跟强平价。
   return row(left, right, title) + followingLine + (notice ? row(`<span style="font-size:11px">${esc(notice)}</span>`, '') : '');
 }
