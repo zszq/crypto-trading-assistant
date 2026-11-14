@@ -137,11 +137,16 @@
 		{
 			key: "assets",
 			label: "资产"
+		},
+		{
+			key: "available",
+			label: "可用"
 		}
 	];
 	var ORDER = ".react-grid-item:has(.dealbox)";
 	var POSITIONS = ".react-grid-item:has(.scroll-table-bottom-box)";
 	var ASSETS = ".react-grid-item:has(.asset-container_new)";
+	var AVAILABLE = "#multiCurrencyMarginModeFuturesStep1";
 	var TARGETS = {
 		order: {
 			box: ORDER,
@@ -155,6 +160,10 @@
 		assets: {
 			box: ASSETS,
 			inner: ".asset-container_new > :not(.rgl-drag-zone):not(.assets-title)"
+		},
+		available: {
+			box: AVAILABLE,
+			inner: "> *"
 		}
 	};
 	function verifyPrivacyStructure() {
@@ -171,6 +180,11 @@
 		expect(document.querySelector(`${ORDER} ${TARGETS.order.inner}`), "开仓模块内容区（.react-grid-item > .h-full）未找到");
 		expect(document.querySelector(".asset-container_new > .assets-title"), "资产模块标题 .assets-title 未找到");
 		expect(document.querySelector(`${ASSETS} ${TARGETS.assets.inner}`), "资产模块内容区未找到");
+		const availableRows = document.querySelectorAll(AVAILABLE);
+		expect(availableRows.length === 1, `可用余额行 ${AVAILABLE} 应有 1 个，实际 ${availableRows.length} 个`);
+		const available = availableRows[0];
+		expect(available.children.length === 2 && available.firstElementChild.textContent.trim() === "可用", "可用余额行标签或结构不对应");
+		expect(available.querySelectorAll(":scope > div > span.text-end").length === 1, "可用余额行金额区域缺失或重复");
 		return anchor;
 	}
 	function buildCss() {

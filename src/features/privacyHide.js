@@ -1,7 +1,7 @@
 import { GM_getValue, GM_setValue } from '$';
 import { addStyle, every, expect, onCleanup } from '../core/guard.js';
 
-// 隐私隐藏：资产 / 开仓 / 仓位三个模块可完全隐藏，鼠标移入或输入框聚焦时显示。
+// 隐私隐藏：开仓 / 仓位 / 资产模块及可用余额行可完全隐藏，鼠标移入或输入框聚焦时显示。
 // 保留已有存储键，避免隐私设置在升级后失效。
 //
 // 实现上全部用 CSS：开关状态挂在 <html> 的类名上，模块用 :has() 识别。
@@ -15,12 +15,14 @@ const MODULES = [
   { key: 'order', label: '开仓' },
   { key: 'positions', label: '仓位' },
   { key: 'assets', label: '资产' },
+  { key: 'available', label: '可用' },
 ];
 
 // 各模块所在的 grid 块；Gate 类名多为打包 hash，只能靠语义 class 和结构识别
 const ORDER = '.react-grid-item:has(.dealbox)';
 const POSITIONS = '.react-grid-item:has(.scroll-table-bottom-box)';
 const ASSETS = '.react-grid-item:has(.asset-container_new)';
+const AVAILABLE = '#multiCurrencyMarginModeFuturesStep1';
 
 // revealOnSelf：只有鼠标移到被隐藏的内容本身（或其中输入框聚焦）才显示；
 // 否则移入整个模块就显示
@@ -37,6 +39,8 @@ const TARGETS = {
   },
   // 标题栏和拖拽区保持清晰，便于认出模块、拖动布局
   assets: { box: ASSETS, inner: '.asset-container_new > :not(.rgl-drag-zone):not(.assets-title)' },
+  // 单独隐藏整行内容，保留行本身的命中区域；悬停其他下单控件时不会露出余额。
+  available: { box: AVAILABLE, inner: '> *' },
 };
 
 // 只读校验：CSS 依赖的结构都必须存在，否则隐藏会静默失效（以为隐藏了其实没有）。
@@ -65,6 +69,11 @@ export function verifyPrivacyStructure() {
   expect(document.querySelector(`${ORDER} ${TARGETS.order.inner}`), '开仓模块内容区（.react-grid-item > .h-full）未找到');
   expect(document.querySelector('.asset-container_new > .assets-title'), '资产模块标题 .assets-title 未找到');
   expect(document.querySelector(`${ASSETS} ${TARGETS.assets.inner}`), '资产模块内容区未找到');
+  const availableRows = document.querySelectorAll(AVAILABLE);
+  expect(availableRows.length === 1, `可用余额行 ${AVAILABLE} 应有 1 个，实际 ${availableRows.length} 个`);
+  const available = availableRows[0];
+  expect(available.children.length === 2 && available.firstElementChild.textContent.trim() === '可用', '可用余额行标签或结构不对应');
+  expect(available.querySelectorAll(':scope > div > span.text-end').length === 1, '可用余额行金额区域缺失或重复');
   return anchor;
 }
 
