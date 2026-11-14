@@ -127,10 +127,6 @@
 	var STORE_KEY = "blurModules";
 	var MODULES = [
 		{
-			key: "order",
-			label: "开仓"
-		},
-		{
 			key: "positions",
 			label: "仓位"
 		},
@@ -143,15 +139,10 @@
 			label: "可用"
 		}
 	];
-	var ORDER = ".react-grid-item:has(.dealbox)";
 	var POSITIONS = ".react-grid-item:has(.scroll-table-bottom-box)";
 	var ASSETS = ".react-grid-item:has(.asset-container_new)";
 	var AVAILABLE = "#multiCurrencyMarginModeFuturesStep1";
 	var TARGETS = {
-		order: {
-			box: ORDER,
-			inner: "> .h-full > *"
-		},
 		positions: {
 			box: POSITIONS,
 			inner: ".scroll-table-bottom-box > :last-child:not(:first-child)",
@@ -177,7 +168,6 @@
 		const onPositionsTab = /^仓位(\(\d+\))?$/.test(active[0].textContent.trim());
 		const anchor = [...bottom.firstElementChild.querySelectorAll(".mantine-Checkbox-label span")].find((s) => s.textContent.trim() === "仅显示当前市场")?.closest(".mantine-Checkbox-root") || null;
 		if (onPositionsTab) expect(anchor, "“仓位”标签下“仅显示当前市场”复选框未找到");
-		expect(document.querySelector(`${ORDER} ${TARGETS.order.inner}`), "开仓模块内容区（.react-grid-item > .h-full）未找到");
 		expect(document.querySelector(".asset-container_new > .assets-title"), "资产模块标题 .assets-title 未找到");
 		expect(document.querySelector(`${ASSETS} ${TARGETS.assets.inner}`), "资产模块内容区未找到");
 		const availableRows = document.querySelectorAll(AVAILABLE);
@@ -214,7 +204,7 @@ ${revealOnSelf ? `${hidden}${SHOW}` : `html.tm-hide-${key} ${box}${SHOW} ${inner
 	function createToggles(state) {
 		const box = document.createElement("div");
 		box.id = TOGGLES_ID;
-		box.innerHTML = "<span>隐藏</span>" + MODULES.map(({ key, label }) => `<label><input type="checkbox" data-key="${key}">${label}</label>`).join("");
+		box.innerHTML = MODULES.map(({ key, label }) => `<label><input type="checkbox" data-key="${key}">${label}</label>`).join("");
 		box.querySelectorAll("input").forEach((input) => {
 			input.checked = state[input.dataset.key];
 			input.addEventListener("change", () => {

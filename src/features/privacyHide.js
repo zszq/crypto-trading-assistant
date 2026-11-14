@@ -1,7 +1,7 @@
 import { GM_getValue, GM_setValue } from '$';
 import { addStyle, every, expect, onCleanup } from '../core/guard.js';
 
-// 隐私隐藏：开仓 / 仓位 / 资产模块及可用余额行可完全隐藏，鼠标移入或输入框聚焦时显示。
+// 隐私隐藏：仓位 / 资产模块及可用余额行可完全隐藏，鼠标移入或输入框聚焦时显示。
 // 保留已有存储键，避免隐私设置在升级后失效。
 //
 // 实现上全部用 CSS：开关状态挂在 <html> 的类名上，模块用 :has() 识别。
@@ -12,14 +12,12 @@ const TOGGLES_ID = 'tm-hide-toggles';
 const STORE_KEY = 'blurModules';
 
 const MODULES = [
-  { key: 'order', label: '开仓' },
   { key: 'positions', label: '仓位' },
   { key: 'assets', label: '资产' },
   { key: 'available', label: '可用' },
 ];
 
 // 各模块所在的 grid 块；Gate 类名多为打包 hash，只能靠语义 class 和结构识别
-const ORDER = '.react-grid-item:has(.dealbox)';
 const POSITIONS = '.react-grid-item:has(.scroll-table-bottom-box)';
 const ASSETS = '.react-grid-item:has(.asset-container_new)';
 const AVAILABLE = '#multiCurrencyMarginModeFuturesStep1';
@@ -27,7 +25,6 @@ const AVAILABLE = '#multiCurrencyMarginModeFuturesStep1';
 // revealOnSelf：只有鼠标移到被隐藏的内容本身（或其中输入框聚焦）才显示；
 // 否则移入整个模块就显示
 const TARGETS = {
-  order: { box: ORDER, inner: '> .h-full > *' },
   // 各标签页结构都是“标签栏 + 1~2 行按钮/筛选 + 数据区”，数据区总在最后
   // （列表是 .table-scroll-window，详情卡片是 .flex-1），只隐藏它，按钮行保持可用。
   // 开关就在这个模块的标签栏里，按模块判断的话，碰开关/点完开关留下焦点都会露出仓位，所以只看数据区本身
@@ -66,7 +63,6 @@ export function verifyPrivacyStructure() {
   );
   const anchor = span?.closest('.mantine-Checkbox-root') || null;
   if (onPositionsTab) expect(anchor, '“仓位”标签下“仅显示当前市场”复选框未找到');
-  expect(document.querySelector(`${ORDER} ${TARGETS.order.inner}`), '开仓模块内容区（.react-grid-item > .h-full）未找到');
   expect(document.querySelector('.asset-container_new > .assets-title'), '资产模块标题 .assets-title 未找到');
   expect(document.querySelector(`${ASSETS} ${TARGETS.assets.inner}`), '资产模块内容区未找到');
   const availableRows = document.querySelectorAll(AVAILABLE);
@@ -111,9 +107,7 @@ function applyState(state) {
 function createToggles(state) {
   const box = document.createElement('div');
   box.id = TOGGLES_ID;
-  box.innerHTML =
-    '<span>隐藏</span>' +
-    MODULES.map(({ key, label }) => `<label><input type="checkbox" data-key="${key}">${label}</label>`).join('');
+  box.innerHTML = MODULES.map(({ key, label }) => `<label><input type="checkbox" data-key="${key}">${label}</label>`).join('');
   box.querySelectorAll('input').forEach((input) => {
     input.checked = state[input.dataset.key];
     input.addEventListener('change', () => {
