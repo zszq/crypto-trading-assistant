@@ -1,4 +1,4 @@
-import { verifyBlurStructure } from '../features/privacyBlur.js';
+import { verifyPrivacyStructure } from '../features/privacyHide.js';
 import { getContract } from '../gate/contract.js';
 import { readOrderForm } from '../gate/orderForm.js';
 import { readPositions } from '../gate/positions.js';
@@ -15,7 +15,7 @@ function verifyStructure() {
   const ctx = expect(getContract(), '无法从地址栏解析合约名');
   readOrderForm();
   readPositions(ctx);
-  verifyBlurStructure();
+  verifyPrivacyStructure();
   readUnrealizedPnl();
 }
 

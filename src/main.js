@@ -1,6 +1,6 @@
 import { startWhenReady } from './core/startup.js';
 import { initAvgPreview } from './features/avgPreview.js';
-import { initPrivacyBlur } from './features/privacyBlur.js';
+import { initPrivacyHide } from './features/privacyHide.js';
 import { initLossAlert } from './features/lossAlert.js';
 
-startWhenReady([initAvgPreview, initPrivacyBlur, initLossAlert]);
+startWhenReady([initAvgPreview, initPrivacyHide, initLossAlert]);

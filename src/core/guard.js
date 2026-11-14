@@ -55,7 +55,7 @@ export function run(name, fn, onFail) {
     if (account === 'loggedOut') return stopSilently();
     if (account !== 'loggedIn') {
       onFail?.();
-      // 页面可能先撤掉交易按钮、稍后才显示登录入口；不能让旧的模糊和界面无限残留。
+      // 页面可能先撤掉交易按钮、稍后才显示登录入口；不能让旧的隐私隐藏状态和界面无限残留。
       accountPendingSince ??= Date.now();
       if (Date.now() - accountPendingSince >= GRACE_MS) stopSilently();
       return;

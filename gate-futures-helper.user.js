@@ -3,7 +3,7 @@
 // @namespace    http://tampermonkey.net/
 // @version      1.7.0
 // @author       zl
-// @description  Gate USDT 永续合约：登录后预估加仓均价与强平价，支持亏损提醒和模块隐私模糊
+// @description  Gate USDT 永续合约：登录后预估加仓均价与强平价，支持亏损提醒和模块隐私隐藏
 // @match        https://www.gate.com/*futures/USDT/*
 // @match        https://www.gate.io/*futures/USDT/*
 // @connect      api.gateio.ws
@@ -123,7 +123,7 @@
 		(document.head || document.documentElement).appendChild(style);
 		onCleanup(() => style.remove());
 	}
-	var TOGGLES_ID = "tm-blur-toggles";
+	var TOGGLES_ID = "tm-hide-toggles";
 	var STORE_KEY = "blurModules";
 	var MODULES = [
 		{
@@ -157,7 +157,7 @@
 			inner: ".asset-container_new > :not(.rgl-drag-zone):not(.assets-title)"
 		}
 	};
-	function verifyBlurStructure() {
+	function verifyPrivacyStructure() {
 		const boxes = document.querySelectorAll(".scroll-table-bottom-box");
 		expect(boxes.length === 1, `仓位区 .scroll-table-bottom-box 应有 1 个，实际 ${boxes.length} 个`);
 		const bottom = boxes[0];
@@ -176,10 +176,10 @@
 	function buildCss() {
 		const SHOW = ":is(:hover, :focus-within)";
 		return Object.entries(TARGETS).map(([key, { box, inner, revealOnSelf }]) => {
-			const blurred = `html.tm-blur-${key} ${box} ${inner}`;
+			const hidden = `html.tm-hide-${key} ${box} ${inner}`;
 			return `
-${blurred} { opacity: 0; transition: opacity .15s; }
-${revealOnSelf ? `${blurred}${SHOW}` : `html.tm-blur-${key} ${box}${SHOW} ${inner}`} {
+${hidden} { opacity: 0; transition: opacity .15s; }
+${revealOnSelf ? `${hidden}${SHOW}` : `html.tm-hide-${key} ${box}${SHOW} ${inner}`} {
   opacity: 1;
   transition: none;
 }`;
@@ -195,12 +195,12 @@ ${revealOnSelf ? `${blurred}${SHOW}` : `html.tm-blur-${key} ${box}${SHOW} ${inne
 		return Object.fromEntries(MODULES.map(({ key }) => [key, !!saved?.[key]]));
 	}
 	function applyState(state) {
-		MODULES.forEach(({ key }) => document.documentElement.classList.toggle(`tm-blur-${key}`, state[key]));
+		MODULES.forEach(({ key }) => document.documentElement.classList.toggle(`tm-hide-${key}`, state[key]));
 	}
 	function createToggles(state) {
 		const box = document.createElement("div");
 		box.id = TOGGLES_ID;
-		box.innerHTML = "<span>模糊</span>" + MODULES.map(({ key, label }) => `<label><input type="checkbox" data-key="${key}">${label}</label>`).join("");
+		box.innerHTML = "<span>隐藏</span>" + MODULES.map(({ key, label }) => `<label><input type="checkbox" data-key="${key}">${label}</label>`).join("");
 		box.querySelectorAll("input").forEach((input) => {
 			input.checked = state[input.dataset.key];
 			input.addEventListener("change", () => {
@@ -211,14 +211,14 @@ ${revealOnSelf ? `${blurred}${SHOW}` : `html.tm-blur-${key} ${box}${SHOW} ${inne
 		});
 		return box;
 	}
-	function initPrivacyBlur() {
+	function initPrivacyHide() {
 		addStyle(buildCss());
 		const state = loadState();
 		applyState(state);
-		onCleanup(() => MODULES.forEach(({ key }) => document.documentElement.classList.remove(`tm-blur-${key}`)));
+		onCleanup(() => MODULES.forEach(({ key }) => document.documentElement.classList.remove(`tm-hide-${key}`)));
 		onCleanup(() => document.getElementById(TOGGLES_ID)?.remove());
-		every("privacyBlur", () => {
-			const anchor = verifyBlurStructure();
+		every("privacyHide", () => {
+			const anchor = verifyPrivacyStructure();
 			if (!anchor || anchor.previousElementSibling?.id === TOGGLES_ID) return;
 			document.getElementById(TOGGLES_ID)?.remove();
 			anchor.before(createToggles(state));
@@ -916,7 +916,7 @@ ${revealOnSelf ? `${blurred}${SHOW}` : `html.tm-blur-${key} ${box}${SHOW} ${inne
 		const ctx = expect(getContract(), "无法从地址栏解析合约名");
 		readOrderForm();
 		readPositions(ctx);
-		verifyBlurStructure();
+		verifyPrivacyStructure();
 		readUnrealizedPnl();
 	}
 	function startWhenReady(features) {
@@ -1433,7 +1433,7 @@ ${revealOnSelf ? `${blurred}${SHOW}` : `html.tm-blur-${key} ${box}${SHOW} ${inne
 	}
 	startWhenReady([
 		initAvgPreview,
-		initPrivacyBlur,
+		initPrivacyHide,
 		initLossAlert
 	]);
 })();
