@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gate 合约助手
 // @namespace    http://tampermonkey.net/
-// @version      1.7.0
+// @version      1.8.0
 // @author       zl
 // @description  Gate USDT 永续合约：登录后预估加仓均价与强平价，支持亏损提醒和模块隐私隐藏
 // @match        https://www.gate.com/*futures/USDT/*
