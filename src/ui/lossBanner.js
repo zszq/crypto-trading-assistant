@@ -30,7 +30,7 @@ export function showLossBanner() {
     'pointer-events:auto',
   ].join(';');
   // 不展示具体金额，避免在启用资产隐私隐藏时泄露实时账户数值。
-  bar.textContent = `⚠ 所有仓位未实现亏损已超过 ${LOSS_ALERT_THRESHOLD} USDT，机会很多，注意止损！`;
+  bar.textContent = `⚠ 所有仓位亏损已超过 ${LOSS_ALERT_THRESHOLD} USDT，机会很多，及时止损！`;
   const emphasis = document.createElement('strong');
   emphasis.textContent = '（只做确定性高的的行情！）';
   emphasis.style.cssText = 'color:#ffff00;font-weight:800';
