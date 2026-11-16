@@ -4,7 +4,7 @@ import { readOrderForm } from '../gate/orderForm.js';
 import { readPositions } from '../gate/positions.js';
 import { readAccountState } from '../gate/account.js';
 import { readUnrealizedPnl } from '../gate/unrealizedPnl.js';
-import { disable, expect, onCleanup, stopSilently, StructureError } from './guard.js';
+import { disable, expect, isDisabled, onCleanup, stopSilently, StructureError } from './guard.js';
 
 // 页面是异步渲染的，启动时最多等这么久让结构就绪；超时仍不对应则判定为改版
 const STARTUP_TIMEOUT_MS = 20000;
@@ -24,9 +24,8 @@ export function startWhenReady(features) {
   let structureDeadline;
   const id = setInterval(() => {
     const account = readAccountState();
-    if (account === 'loggedOut') return stopSilently();
     if (account !== 'loggedIn') {
-      // 登录状态未知也不能读取持仓、请求接口或显示改版提示。
+      // 首屏可能先渲染登录入口再恢复会话；等待期间仍不读取持仓或请求接口。
       if (Date.now() >= accountDeadline) stopSilently();
       return;
     }
@@ -44,7 +43,10 @@ export function startWhenReady(features) {
     }
     clearInterval(id);
     try {
-      features.forEach((init) => init());
+      for (const init of features) {
+        if (isDisabled()) break;
+        init();
+      }
     } catch (e) {
       disable(`启动失败：${e?.message || e}`);
     }

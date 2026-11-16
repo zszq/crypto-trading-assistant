@@ -1,5 +1,5 @@
-import { TICK_MS } from '../config.js';
-import { every, expect, listen, onCleanup, run } from '../core/guard.js';
+import { expect, PendingError } from '../core/guard.js';
+import { refreshOnPageChange } from '../core/refresh.js';
 import { getContract, isSupportedUnit, toCoin } from '../gate/contract.js';
 import { readOrderForm } from '../gate/orderForm.js';
 import { readPositions } from '../gate/positions.js';
@@ -12,16 +12,38 @@ const BUY_COLOR = 'var(--color-function-trade-buy, #2ebd85)';
 const SELL_COLOR = 'var(--color-function-trade-sell, #f6465d)';
 
 let lastKey = '';
+let lastState = '';
 
-function hide() {
+function setState(reason) {
+  if (reason === lastState) return;
+  lastState = reason;
+  console.debug('[均价预估] 状态：', reason);
+}
+
+function hide(reason) {
   hidePanel();
   lastKey = '';
+  setState(reason);
 }
 
 function render(el, key, html, status = '') {
-  if (key === lastKey && el.lastElementChild.innerHTML) return;
-  lastKey = key;
+  const cacheKey = JSON.stringify([key, status]);
+  if (cacheKey === lastKey && el.lastElementChild.innerHTML) return;
   renderPanel(el, html, status);
+  lastKey = cacheKey;
+}
+
+function notice(text) {
+  const el = ensurePanel();
+  el.style.display = 'flex';
+  render(el, `notice:${text}`, renderNotice(text));
+  setState(text);
+}
+
+function onFail(error) {
+  if (error instanceof PendingError) return notice(error.message);
+  // 结构错误可能带有原始字段值，状态日志只记录类别，避免输出账户数据。
+  hide(error ? '页面结构暂时不对应' : '等待确认登录状态');
 }
 
 // 先完整读取并校验页面结构，全部通过后才写 DOM：
@@ -30,15 +52,15 @@ function tick() {
   const ctx = expect(getContract(), '无法从地址栏解析合约名');
   const form = readOrderForm();
   // 没填数量时直接返回，不读仓位区，空闲时几乎没有开销
-  if (!form.isOpen || !isPositive(form.price) || !(isPositive(form.qtyLong) || isPositive(form.qtyShort))) return hide();
+  if (!form.isOpen) return hide('当前为平仓模式');
+  if (!isPositive(form.price) || !(isPositive(form.qtyLong) || isPositive(form.qtyShort))) return hide('未填写有效委托价格或数量');
 
   if (!isSupportedUnit(form.unit, ctx)) {
-    const el = ensurePanel();
-    el.style.display = 'flex';
-    return render(el, `unit:${form.unit}`, renderNotice(`数量单位为 ${form.unit} 时不预估均价`));
+    return notice(`数量单位为 ${form.unit} 时不预估均价`);
   }
 
   const pos = readPositions(ctx);
+  if (pos.status === 'unavailable') return notice(pos.notice);
   // 百分比模式下多空数量不同，所以按方向各自换算
   const qtyLong = toCoin(form.qtyLong, form.unit, ctx);
   const qtyShort = toCoin(form.qtyShort, form.unit, ctx);
@@ -46,7 +68,7 @@ function tick() {
   const showLong = pos.long && isPositive(form.qtyLong);
   const showShort = pos.short && isPositive(form.qtyShort);
   // 没有可预估的方向时整个面板不显示，不留空白占位
-  if (!showLong && !showShort) return hide();
+  if (!showLong && !showShort) return hide('当前合约没有可预估的持仓方向');
   const risk = readLiquidationData(ctx, form);
   const preview = (side, qty) => risk.notice ? { notice: risk.notice, loading: risk.loading } : estimateLiquidation({
     positions: pos, side, price: form.price, qty, ...risk,
@@ -67,21 +89,14 @@ function tick() {
     (showShort ? renderLine('开空', SELL_COLOR, pos.short, form.price, qtyShort) +
       renderLiquidationLine('开空', SELL_COLOR, liquidationShort,
         renderClosingBreakEvenLine('开空', 'inherit', pos, 'short', form.price, qtyShort)) : '');
-  if (key !== lastKey) {
-    // 页面结构随 Gate 改版会变，出问题时在控制台看实际读到的值最快定位
-    console.debug('[均价预估]', { price: form.priceStr, unit: form.unit, qtyLong, qtyShort, pos });
-  }
   render(el, key, html, risk.loading ? risk.notice : '');
+  setState('预估已显示');
 }
 
 export function initAvgPreview() {
-  // 结构暂时不对应（宽限期内）时，面板回到隐藏状态，不展示可能读错的数据
-  every('avgPreview', tick, TICK_MS, hide);
-  // 手动输入时立即刷新，不等下一次轮询；放到下一帧再读，确保 React 已经处理完这次输入
-  let frame;
-  listen(document, 'input', () => {
-    cancelAnimationFrame(frame);
-    frame = requestAnimationFrame(() => run('avgPreview', tick, hide));
-  }, true);
-  onCleanup(() => cancelAnimationFrame(frame));
+  refreshOnPageChange('avgPreview', tick, {
+    selector: '.react-grid-item:has(.dealbox), .scroll-table-bottom-box, .asset-container_new',
+    events: ['input', 'change', 'click', 'pointerup'],
+    onFail,
+  });
 }

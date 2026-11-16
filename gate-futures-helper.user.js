@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gate 合约助手
 // @namespace    http://tampermonkey.net/
-// @version      1.8.0
+// @version      1.8.1
 // @author       zl
 // @description  Gate USDT 永续合约：登录后预估加仓均价与强平价，支持亏损提醒和模块隐私隐藏
 // @match        https://www.gate.com/*futures/USDT/*
@@ -60,11 +60,13 @@
 		return controls.some((el) => /^(?:开多|开空|平多|平空|买入\s*[/／(（]?\s*(?:[开做]多|平空)|卖出\s*[/／(（]?\s*(?:[开做]空|平多))/.test(el.textContent.trim())) ? "loggedIn" : "pending";
 	}
 	var StructureError = class extends Error {};
+	var PendingError = class extends StructureError {};
 	function expect(cond, message) {
 		if (!cond) throw new StructureError(message);
 		return cond;
 	}
 	var GRACE_MS = 3e3;
+	var DATA_WAIT_MS = 2e4;
 	var disabled = false;
 	var accountPendingSince = null;
 	var cleanups = [];
@@ -94,7 +96,8 @@
 			if (account !== "loggedIn") {
 				onFail?.();
 				accountPendingSince ??= Date.now();
-				if (Date.now() - accountPendingSince >= GRACE_MS) stopSilently();
+				delete failingSince[name];
+				if (Date.now() - accountPendingSince >= DATA_WAIT_MS) stopSilently();
 				return;
 			}
 			accountPendingSince = null;
@@ -103,10 +106,14 @@
 		} catch (e) {
 			if (!(e instanceof StructureError)) return disable(`脚本异常：${e?.message || e}`);
 			try {
-				onFail?.();
+				onFail?.(e);
 			} catch (_) {}
-			failingSince[name] ??= Date.now();
-			if (Date.now() - failingSince[name] >= GRACE_MS) disable(e.message);
+			const pending = e instanceof PendingError;
+			if (failingSince[name]?.pending !== pending) failingSince[name] = {
+				at: Date.now(),
+				pending
+			};
+			if (Date.now() - failingSince[name].at >= (pending ? DATA_WAIT_MS : GRACE_MS)) disable(e.message);
 		}
 	}
 	function every(name, fn, ms, onFail) {
@@ -122,6 +129,21 @@
 		style.textContent = css;
 		(document.head || document.documentElement).appendChild(style);
 		onCleanup(() => style.remove());
+	}
+	function readPositionArea() {
+		const boxes = document.querySelectorAll(".scroll-table-bottom-box");
+		expect(boxes.length === 1, `仓位区 .scroll-table-bottom-box 应有 1 个，实际 ${boxes.length} 个`);
+		const bottom = boxes[0];
+		expect(bottom.closest(".react-grid-item"), "仓位区所在模块 .react-grid-item 未找到");
+		expect(bottom.children.length >= 2, "仓位区缺少数据区");
+		const active = [...bottom.firstElementChild.firstElementChild?.children || []].filter((tab) => tab.classList.contains("text-c-text-1"));
+		expect(active.length === 1, `仓位区选中的标签应有 1 个，实际 ${active.length} 个`);
+		const title = active[0].textContent.trim();
+		return {
+			bottom,
+			onPositionsTab: /^仓位(\(\d+\))?$/.test(title),
+			empty: /^仓位\(0\)$/.test(title)
+		};
 	}
 	var TOGGLES_ID = "tm-hide-toggles";
 	var STORE_KEY = "blurModules";
@@ -158,14 +180,7 @@
 		}
 	};
 	function verifyPrivacyStructure() {
-		const boxes = document.querySelectorAll(".scroll-table-bottom-box");
-		expect(boxes.length === 1, `仓位区 .scroll-table-bottom-box 应有 1 个，实际 ${boxes.length} 个`);
-		const bottom = boxes[0];
-		expect(bottom.closest(".react-grid-item"), "仓位区所在模块 .react-grid-item 未找到");
-		expect(bottom.children.length >= 2, "仓位区缺少数据区");
-		const active = [...bottom.firstElementChild.firstElementChild?.children || []].filter((t) => t.classList.contains("text-c-text-1"));
-		expect(active.length === 1, `仓位区选中的标签应有 1 个，实际 ${active.length} 个`);
-		const onPositionsTab = /^仓位(\(\d+\))?$/.test(active[0].textContent.trim());
+		const { bottom, onPositionsTab } = readPositionArea();
 		const anchor = [...bottom.firstElementChild.querySelectorAll(".mantine-Checkbox-label span")].find((s) => s.textContent.trim() === "仅显示当前市场")?.closest(".mantine-Checkbox-root") || null;
 		if (onPositionsTab) expect(anchor, "“仓位”标签下“仅显示当前市场”复选框未找到");
 		expect(document.querySelector(".asset-container_new > .assets-title"), "资产模块标题 .assets-title 未找到");
@@ -769,7 +784,6 @@ ${revealOnSelf ? `${hidden}${SHOW}` : `html.tm-hide-${key} ${box}${SHOW} ${inner
 		const qtyInput = qtyInputs[0];
 		const unitEl = expect(qtyInput.closest("label")?.querySelector("span.truncate"), "数量单位 span.truncate 未找到");
 		const wrapper = expect(qtyInput.closest(".mantine-InputWrapper-root"), "数量输入框外层 .mantine-InputWrapper-root 未找到");
-		const anchor = expect([...dealbox.children].find((el) => /^可用/.test(el.textContent.trim())), "下单区“可用”行未找到");
 		const orderModule = expect(dealbox.closest(".react-grid-item"), "下单区所在模块 .react-grid-item 未找到");
 		const openTab = expect(orderModule.querySelector("#tab-long[role=\"tab\"]"), "“开仓”标签 #tab-long 未找到");
 		expect(orderModule.querySelector("#tab-short[role=\"tab\"]"), "“平仓”标签 #tab-short 未找到");
@@ -777,7 +791,6 @@ ${revealOnSelf ? `${hidden}${SHOW}` : `html.tm-hide-${key} ${box}${SHOW} ${inner
 		const base = {
 			dealbox,
 			qtyInput,
-			anchor,
 			isOpen,
 			price: NaN,
 			priceStr: "",
@@ -856,10 +869,21 @@ ${revealOnSelf ? `${hidden}${SHOW}` : `html.tm-hide-${key} ${box}${SHOW} ${inner
 	}
 	var sideOf = (texts) => texts.includes("多") ? "long" : texts.includes("空") ? "short" : null;
 	function readPositions(ctx) {
+		const { bottom, onPositionsTab, empty } = readPositionArea();
 		const result = {
 			long: null,
-			short: null
+			short: null,
+			status: "ready"
 		};
+		if (!onPositionsTab) return {
+			...result,
+			status: "unavailable",
+			notice: "请切回“仓位”标签读取当前持仓"
+		};
+		const content = bottom.lastElementChild;
+		if (content.matches("[aria-busy=\"true\"]") || content.querySelector("[aria-busy=\"true\"], [role=\"progressbar\"], .mantine-Loader-root")) throw new PendingError("持仓数据加载中…");
+		let rows = 0;
+		let emptyTable = false;
 		const add = (where, name, side, sizeText, entryText, risk) => {
 			const entry = num(entryText);
 			const size = isDecimal(num(sizeText)) ? num(sizeText).abs() : NaN;
@@ -867,6 +891,7 @@ ${revealOnSelf ? `${hidden}${SHOW}` : `html.tm-hide-${key} ${box}${SHOW} ${inner
 			expect(side, `${where}中多/空方向未找到`);
 			expect(isPositive(entry), `${where}中开仓均价无法解析：“${entryText}”`);
 			expect(isPositive(size), `${where}中数量无法解析：“${sizeText}”`);
+			rows++;
 			if (name !== ctx.display) return;
 			const unit = (sizeText.match(/[^\d.,\s-]+$/) || [""])[0];
 			expect(!result[side], `${where}中同方向有多个仓位，无法确认加仓归属`);
@@ -877,18 +902,20 @@ ${revealOnSelf ? `${hidden}${SHOW}` : `html.tm-hide-${key} ${box}${SHOW} ${inner
 				...risk
 			};
 		};
-		document.querySelectorAll("table.position-table").forEach((table) => {
+		(content.matches("table.position-table") ? [content] : [...content.querySelectorAll("table.position-table")]).forEach((table) => {
 			expect(table.querySelector("th.size") && table.querySelector("th.entry_price"), "仓位列表表头“数量/开仓均价”列未找到");
 			const headers = [...table.querySelectorAll("thead th")];
 			const liqIndex = headers.findIndex((th) => isLiquidationLabel(th.textContent));
 			const marginIndex = headers.findIndex((th) => isMarginLabel(th.textContent));
-			table.querySelectorAll("tbody tr").forEach((tr) => {
+			const bodyRows = [...table.querySelectorAll("tbody tr")];
+			if (table.querySelector("tbody") && bodyRows.length === 0) emptyTable = true;
+			bodyRows.forEach((tr) => {
 				if (tr.cells.length <= 1) return;
 				const badges = [...tr.querySelectorAll(".mantine-Badge-label")].map((b) => b.textContent.trim());
 				add("仓位列表", tr.querySelector("td span.text-b10")?.textContent.replace(/\s/g, ""), sideOf(badges), expect(tr.querySelector("td.size"), "仓位列表中数量单元格 td.size 未找到").textContent.trim(), expect(tr.querySelector("td.entry_price"), "仓位列表中开仓均价单元格 td.entry_price 未找到").textContent.trim(), parsePositionRisk(tr.innerText, tr.cells[marginIndex]?.innerText, tr.cells[liqIndex]?.innerText));
 			});
 		});
-		document.querySelectorAll("span.underline-dashed").forEach((label) => {
+		content.querySelectorAll("span.underline-dashed").forEach((label) => {
 			if (label.textContent.trim() !== "开仓均价" || label.closest("table")) return;
 			if (!label.closest(".scroll-table-bottom-box")) return;
 			let card = label.parentElement;
@@ -903,6 +930,8 @@ ${revealOnSelf ? `${hidden}${SHOW}` : `html.tm-hide-${key} ${box}${SHOW} ${inner
 			};
 			add("仓位卡片", lines[0], sideOf(lines.slice(0, qtyIdx)), lines[qtyIdx + 1] || "", lines[lines.indexOf("开仓均价") + 1] || "", parsePositionRisk(lines.slice(0, qtyIdx).join(" "), field(isMarginLabel), field(isLiquidationLabel)));
 		});
+		const emptyNotice = /暂无(?:数据|仓位|持仓)|没有(?:仓位|持仓)|无持仓/.test(content.textContent);
+		if (rows > 0 && empty || !rows && !empty && !emptyNotice && !emptyTable) throw new PendingError("持仓数据加载中…");
 		return result;
 	}
 	function readUnrealizedPnl() {
@@ -927,9 +956,7 @@ ${revealOnSelf ? `${hidden}${SHOW}` : `html.tm-hide-${key} ${box}${SHOW} ${inner
 		const accountDeadline = Date.now() + STARTUP_TIMEOUT_MS;
 		let structureDeadline;
 		const id = setInterval(() => {
-			const account = readAccountState();
-			if (account === "loggedOut") return stopSilently();
-			if (account !== "loggedIn") {
+			if (readAccountState() !== "loggedIn") {
 				if (Date.now() >= accountDeadline) stopSilently();
 				return;
 			}
@@ -947,12 +974,86 @@ ${revealOnSelf ? `${hidden}${SHOW}` : `html.tm-hide-${key} ${box}${SHOW} ${inner
 			}
 			clearInterval(id);
 			try {
-				features.forEach((init) => init());
+				for (const init of features) {
+					if (isDisabled()) break;
+					init();
+				}
 			} catch (e) {
 				disable(`启动失败：${e?.message || e}`);
 			}
 		}, POLL_MS);
 		onCleanup(() => clearInterval(id));
+	}
+	var OWN_UI = "#tm-avg-preview, #tm-hide-toggles, #tm-gate-loss-alert, #tm-gate-helper-banner";
+	var elementOf = (node) => node.nodeType === 1 ? node : node.parentElement;
+	var isOwn = (node) => !!elementOf(node)?.closest(OWN_UI);
+	function isPageMutation(record) {
+		if (isOwn(record.target)) return false;
+		if (record.type !== "childList") return true;
+		return [...record.addedNodes, ...record.removedNodes].some((node) => !isOwn(node));
+	}
+	function refreshOnPageChange(name, tick, { selector, events = [], onFail, immediate = false }) {
+		let roots = [];
+		let scheduled = false;
+		let frame;
+		let stopped = false;
+		const schedule = () => {
+			if (stopped || isDisabled() || scheduled) return;
+			scheduled = true;
+			const flush = () => {
+				scheduled = false;
+				if (!stopped) run(name, refresh, onFail);
+			};
+			if (immediate) queueMicrotask(flush);
+			else frame = requestAnimationFrame(flush);
+		};
+		const local = new MutationObserver((records) => {
+			if (records.some(isPageMutation)) schedule();
+		});
+		const structure = new MutationObserver((records) => {
+			if (records.some((record) => isPageMutation(record) && [...record.addedNodes, ...record.removedNodes].some((node) => node.nodeType === 1 && (node.matches(selector) || node.querySelector(selector) || elementOf(record.target)?.closest(selector))))) schedule();
+		});
+		function refresh() {
+			const next = [...document.querySelectorAll(selector)];
+			if (next.length !== roots.length || next.some((node, index) => node !== roots[index])) {
+				local.disconnect();
+				roots = next;
+				roots.forEach((node) => local.observe(node, {
+					subtree: true,
+					childList: true,
+					characterData: true,
+					attributes: true,
+					attributeFilter: [
+						"class",
+						"style",
+						"value",
+						"aria-selected",
+						"aria-busy"
+					]
+				}));
+			}
+			tick();
+		}
+		onCleanup(() => {
+			stopped = true;
+			if (frame !== void 0) cancelAnimationFrame(frame);
+			local.disconnect();
+			structure.disconnect();
+			roots = [];
+		});
+		structure.observe(document.body, {
+			childList: true,
+			subtree: true
+		});
+		events.forEach((type) => listen(document, type, (event) => {
+			if (!isOwn(event.target) && elementOf(event.target)?.closest(selector)) schedule();
+		}, true));
+		listen(document, "visibilitychange", () => {
+			if (!document.hidden) schedule();
+		});
+		listen(window, "focus", schedule);
+		every(name, refresh, 300, onFail);
+		run(name, refresh, onFail);
 	}
 	function normalizeTiers(raw) {
 		if (!Array.isArray(raw) || !raw.length) return null;
@@ -1031,13 +1132,13 @@ ${revealOnSelf ? `${hidden}${SHOW}` : `html.tm-hide-${key} ${box}${SHOW} ${inner
 		} : { notice: "风险档位内无强平价" };
 	}
 	var validPosition = (pos) => pos && isPositive(pos.entry) && isPositive(pos.size);
-	var notice = (text) => ({ notice: text });
+	var notice$1 = (text) => ({ notice: text });
 	function estimateLiquidation({ positions, side, price, qty, settings, market }) {
 		const pos = positions[side];
-		if (!market || !validPosition(pos) || !isPositive(qty) || !isPositive(price)) return notice("等待完整价格和数量");
-		if (settings.unsupported) return notice("暂不支持组合或多币种保证金");
-		if (!pos.marginMode || !settings.marginMode) return notice("未读取到保证金模式");
-		if (pos.marginMode !== settings.marginMode) return notice("下单与持仓保证金模式不一致");
+		if (!market || !validPosition(pos) || !isPositive(qty) || !isPositive(price)) return notice$1("等待完整价格和数量");
+		if (settings.unsupported) return notice$1("暂不支持组合或多币种保证金");
+		if (!pos.marginMode || !settings.marginMode) return notice$1("未读取到保证金模式");
+		if (pos.marginMode !== settings.marginMode) return notice$1("下单与持仓保证金模式不一致");
 		const isolated = pos.marginMode === "isolated";
 		const current = {
 			long: null,
@@ -1046,32 +1147,32 @@ ${revealOnSelf ? `${hidden}${SHOW}` : `html.tm-hide-${key} ${box}${SHOW} ${inner
 		for (const direction of isolated ? [side] : ["long", "short"]) {
 			const item = positions[direction];
 			if (!item) continue;
-			if (!item.marginMode) return notice("另一方向的保证金模式不明");
+			if (!item.marginMode) return notice$1("另一方向的保证金模式不明");
 			if (item.marginMode !== pos.marginMode) continue;
-			if (!validPosition(item)) return notice("持仓数量换算中…");
+			if (!validPosition(item)) return notice$1("持仓数量换算中…");
 			current[direction] = item;
 		}
 		if (current.long && current.short) {
 			const a = current.long.liquidation;
 			const b = current.short.liquidation;
-			if (![a, b].every(isPositive) || num(a).minus(b).abs().gt(max(a, b).times("1e-5"))) return notice("双向全仓强平数据不一致");
+			if (![a, b].every(isPositive) || num(a).minus(b).abs().gt(max(a, b).times("1e-5"))) return notice$1("双向全仓强平数据不一致");
 		}
 		let margin;
 		if (isPositive(pos.liquidation)) {
 			margin = hedgeMaintenance(current, pos.liquidation, market.tiers, market.fee);
 			if (isDecimal(margin)) margin = margin.minus(positionPnl(current, pos.liquidation));
 		} else if (isolated && isDecimal(pos.margin) && num(pos.margin).gte(0)) margin = num(pos.margin);
-		else return notice("缺少当前强平价或逐仓保证金");
-		if (!isDecimal(margin)) return notice("当前强平价超出风险档位范围");
+		else return notice$1("缺少当前强平价或逐仓保证金");
+		if (!isDecimal(margin)) return notice$1("当前强平价超出风险档位范围");
 		const notional = num(qty).times(price);
 		let marginNumerator = margin;
 		let marginDivisor = num(1);
 		let explanation;
 		if (isolated) {
 			const leverage = side === "long" ? settings.leverageLong : settings.leverageShort;
-			if (!(isDecimal(leverage) && num(leverage).gte(1))) return notice("未读取到当前杠杆");
+			if (!(isDecimal(leverage) && num(leverage).gte(1))) return notice$1("未读取到当前杠杆");
 			const tier = market.tiers.find((item) => num(pos.size).plus(qty).times(max(price, market.mark)).lte(item.limit));
-			if (!tier || num(leverage).gt(tier.leverageMax)) return notice("加仓规模超过当前杠杆档位");
+			if (!tier || num(leverage).gt(tier.leverageMax)) return notice$1("加仓规模超过当前杠杆档位");
 			marginDivisor = num(leverage);
 			const reserveNumerator = notional.times(market.fee).times(side === "short" ? marginDivisor.plus(1) : marginDivisor);
 			marginNumerator = margin.times(marginDivisor).plus(notional).plus(reserveNumerator);
@@ -1326,30 +1427,46 @@ ${revealOnSelf ? `${hidden}${SHOW}` : `html.tm-hide-${key} ${box}${SHOW} ${inner
 	var BUY_COLOR = "var(--color-function-trade-buy, #2ebd85)";
 	var SELL_COLOR = "var(--color-function-trade-sell, #f6465d)";
 	var lastKey = "";
-	function hide() {
+	var lastState = "";
+	function setState(reason) {
+		if (reason === lastState) return;
+		lastState = reason;
+		console.debug("[均价预估] 状态：", reason);
+	}
+	function hide(reason) {
 		hidePanel();
 		lastKey = "";
+		setState(reason);
 	}
 	function render(el, key, html, status = "") {
-		if (key === lastKey && el.lastElementChild.innerHTML) return;
-		lastKey = key;
+		const cacheKey = JSON.stringify([key, status]);
+		if (cacheKey === lastKey && el.lastElementChild.innerHTML) return;
 		renderPanel(el, html, status);
+		lastKey = cacheKey;
+	}
+	function notice(text) {
+		const el = ensurePanel();
+		el.style.display = "flex";
+		render(el, `notice:${text}`, renderNotice(text));
+		setState(text);
+	}
+	function onFail(error) {
+		if (error instanceof PendingError) return notice(error.message);
+		hide(error ? "页面结构暂时不对应" : "等待确认登录状态");
 	}
 	function tick$1() {
 		const ctx = expect(getContract(), "无法从地址栏解析合约名");
 		const form = readOrderForm();
-		if (!form.isOpen || !isPositive(form.price) || !(isPositive(form.qtyLong) || isPositive(form.qtyShort))) return hide();
-		if (!isSupportedUnit(form.unit, ctx)) {
-			const el = ensurePanel();
-			el.style.display = "flex";
-			return render(el, `unit:${form.unit}`, renderNotice(`数量单位为 ${form.unit} 时不预估均价`));
-		}
+		if (!form.isOpen) return hide("当前为平仓模式");
+		if (!isPositive(form.price) || !(isPositive(form.qtyLong) || isPositive(form.qtyShort))) return hide("未填写有效委托价格或数量");
+		if (!isSupportedUnit(form.unit, ctx)) return notice(`数量单位为 ${form.unit} 时不预估均价`);
 		const pos = readPositions(ctx);
+		if (pos.status === "unavailable") return notice(pos.notice);
 		const qtyLong = toCoin(form.qtyLong, form.unit, ctx);
 		const qtyShort = toCoin(form.qtyShort, form.unit, ctx);
 		const showLong = pos.long && isPositive(form.qtyLong);
 		const showShort = pos.short && isPositive(form.qtyShort);
-		if (!showLong && !showShort) return hide();
+		if (!showLong && !showShort) return hide("当前合约没有可预估的持仓方向");
 		const risk = readLiquidationData(ctx, form);
 		const preview = (side, qty) => risk.notice ? {
 			notice: risk.notice,
@@ -1374,24 +1491,20 @@ ${revealOnSelf ? `${hidden}${SHOW}` : `html.tm-hide-${key} ${box}${SHOW} ${inner
 		]);
 		const el = ensurePanel();
 		el.style.display = "flex";
-		const html = renderBreakEvenLine(pos) + (showLong ? renderLine("开多", BUY_COLOR, pos.long, form.price, qtyLong) + renderLiquidationLine("开多", BUY_COLOR, liquidationLong, renderClosingBreakEvenLine("开多", "inherit", pos, "long", form.price, qtyLong)) : "") + (showShort ? renderLine("开空", SELL_COLOR, pos.short, form.price, qtyShort) + renderLiquidationLine("开空", SELL_COLOR, liquidationShort, renderClosingBreakEvenLine("开空", "inherit", pos, "short", form.price, qtyShort)) : "");
-		if (key !== lastKey) console.debug("[均价预估]", {
-			price: form.priceStr,
-			unit: form.unit,
-			qtyLong,
-			qtyShort,
-			pos
-		});
-		render(el, key, html, risk.loading ? risk.notice : "");
+		render(el, key, renderBreakEvenLine(pos) + (showLong ? renderLine("开多", BUY_COLOR, pos.long, form.price, qtyLong) + renderLiquidationLine("开多", BUY_COLOR, liquidationLong, renderClosingBreakEvenLine("开多", "inherit", pos, "long", form.price, qtyLong)) : "") + (showShort ? renderLine("开空", SELL_COLOR, pos.short, form.price, qtyShort) + renderLiquidationLine("开空", SELL_COLOR, liquidationShort, renderClosingBreakEvenLine("开空", "inherit", pos, "short", form.price, qtyShort)) : ""), risk.loading ? risk.notice : "");
+		setState("预估已显示");
 	}
 	function initAvgPreview() {
-		every("avgPreview", tick$1, 300, hide);
-		let frame;
-		listen(document, "input", () => {
-			cancelAnimationFrame(frame);
-			frame = requestAnimationFrame(() => run("avgPreview", tick$1, hide));
-		}, true);
-		onCleanup(() => cancelAnimationFrame(frame));
+		refreshOnPageChange("avgPreview", tick$1, {
+			selector: ".react-grid-item:has(.dealbox), .scroll-table-bottom-box, .asset-container_new",
+			events: [
+				"input",
+				"change",
+				"click",
+				"pointerup"
+			],
+			onFail
+		});
 	}
 	var BANNER_ID = "tm-gate-loss-alert";
 	function hideLossBanner() {
@@ -1432,8 +1545,11 @@ ${revealOnSelf ? `${hidden}${SHOW}` : `html.tm-hide-${key} ${box}${SHOW} ${inner
 	}
 	function initLossAlert() {
 		onCleanup(hideLossBanner);
-		every("lossAlert", tick, 300, hideLossBanner);
-		run("lossAlert", tick, hideLossBanner);
+		refreshOnPageChange("lossAlert", tick, {
+			selector: ".asset-container_new",
+			immediate: true,
+			onFail: hideLossBanner
+		});
 	}
 	startWhenReady([
 		initAvgPreview,

@@ -1,5 +1,6 @@
 import { GM_getValue, GM_setValue } from '$';
 import { addStyle, every, expect, onCleanup } from '../core/guard.js';
+import { readPositionArea } from '../gate/positionArea.js';
 
 // 隐私隐藏：仓位 / 资产模块及可用余额行可完全隐藏，鼠标移入或输入框聚焦时显示。
 // 保留已有存储键，避免隐私设置在升级后失效。
@@ -43,20 +44,10 @@ const TARGETS = {
 // 只读校验：CSS 依赖的结构都必须存在，否则隐藏会静默失效（以为隐藏了其实没有）。
 // 返回开关的插入锚点；当前标签页本来就没有“仅显示当前市场”时返回 null
 export function verifyPrivacyStructure() {
-  const boxes = document.querySelectorAll('.scroll-table-bottom-box');
-  expect(boxes.length === 1, `仓位区 .scroll-table-bottom-box 应有 1 个，实际 ${boxes.length} 个`);
-  const bottom = boxes[0];
-  expect(bottom.closest('.react-grid-item'), '仓位区所在模块 .react-grid-item 未找到');
-  // 至少要有“标签栏 + 数据区”，否则没有可隐藏的内容
-  expect(bottom.children.length >= 2, '仓位区缺少数据区');
-
   // “资金流水”“负债管理”等标签页本来就没有“仅显示当前市场”，且 Gate 会记住上次的标签页，
   // 所以只在“仓位”标签选中时要求它存在。选中标签靠 text-c-text-1 识别，
   // 必须恰好一个，这样该类名改版时会报错而不是静默放过
-  const tabs = [...(bottom.firstElementChild.firstElementChild?.children || [])];
-  const active = tabs.filter((t) => t.classList.contains('text-c-text-1'));
-  expect(active.length === 1, `仓位区选中的标签应有 1 个，实际 ${active.length} 个`);
-  const onPositionsTab = /^仓位(\(\d+\))?$/.test(active[0].textContent.trim());
+  const { bottom, onPositionsTab } = readPositionArea();
 
   const span = [...bottom.firstElementChild.querySelectorAll('.mantine-Checkbox-label span')].find(
     (s) => s.textContent.trim() === '仅显示当前市场'

@@ -7,6 +7,9 @@ import { readAccountState } from '../gate/account.js';
 
 export class StructureError extends Error {}
 
+// 数据加载和结构改版需要不同的等待时长，避免慢请求被 3 秒的结构宽限误判。
+export class PendingError extends StructureError {}
+
 // 断言页面结构；不成立时抛出 StructureError。返回 cond 本身，便于 const el = expect(query(), '...')
 export function expect(cond, message) {
   if (!cond) throw new StructureError(message);
@@ -15,6 +18,7 @@ export function expect(cond, message) {
 
 // 切换合约/标签时 React 会短暂处于中间状态，结构不符需持续超过这个时长才判定为改版
 const GRACE_MS = 3000;
+const DATA_WAIT_MS = 20000;
 
 let disabled = false;
 let accountPendingSince = null;
@@ -57,7 +61,8 @@ export function run(name, fn, onFail) {
       onFail?.();
       // 页面可能先撤掉交易按钮、稍后才显示登录入口；不能让旧的隐私隐藏状态和界面无限残留。
       accountPendingSince ??= Date.now();
-      if (Date.now() - accountPendingSince >= GRACE_MS) stopSilently();
+      delete failingSince[name];
+      if (Date.now() - accountPendingSince >= DATA_WAIT_MS) stopSilently();
       return;
     }
     accountPendingSince = null;
@@ -66,12 +71,13 @@ export function run(name, fn, onFail) {
   } catch (e) {
     if (!(e instanceof StructureError)) return disable(`脚本异常：${e?.message || e}`);
     try {
-      onFail?.();
+      onFail?.(e);
     } catch (_) {
       // ignore
     }
-    failingSince[name] ??= Date.now();
-    if (Date.now() - failingSince[name] >= GRACE_MS) disable(e.message);
+    const pending = e instanceof PendingError;
+    if (failingSince[name]?.pending !== pending) failingSince[name] = { at: Date.now(), pending };
+    if (Date.now() - failingSince[name].at >= (pending ? DATA_WAIT_MS : GRACE_MS)) disable(e.message);
   }
 }
 

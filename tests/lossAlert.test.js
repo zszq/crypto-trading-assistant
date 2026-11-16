@@ -18,13 +18,18 @@ function page() {
       },
     },
   };
+  const asset = { nodeType: 1, closest: () => null };
   const document = {
+    body: {},
+    addEventListener() {},
+    removeEventListener() {},
     querySelector(selector) {
       assert.equal(selector, '.dealbox');
       return box;
     },
     querySelectorAll(selector) {
       if (selector === 'a[href*="/login"], a[href*="/signin"]') return [];
+      if (selector === '.asset-container_new') return [asset];
       assert.equal(selector, '.asset-container_new span.underline-dotted', '只读取资产汇总，不能累计可被过滤的仓位行');
       return Array(state.labelCount).fill(label);
     },
@@ -37,7 +42,7 @@ function page() {
     }),
     documentElement: { appendChild: (node) => nodes.set(node.id, node) },
   };
-  return { state, nodes, document };
+  return { state, nodes, document, asset };
 }
 
 test('汇总盈亏：解析正负、零、千分位及 Unicode 负号，保留小数精度', () => {
@@ -72,13 +77,21 @@ test('汇总盈亏：缺失、重复、占位、错币种及附带百分比不�
   }
 });
 
-test('亏损提醒：严格大于 100、恢复后移除、无重复横幅，异常恢复和退出登录均清理', () => {
-  const { state, nodes, document } = page();
+test('亏损提醒：严格大于 100、越线立即检测、无重复横幅，异常恢复和退出登录均清理', async () => {
+  const { state, nodes, document, asset } = page();
   globalThis.document = document;
   globalThis.getComputedStyle = () => ({ visibility: 'visible' });
   const originalSetInterval = globalThis.setInterval;
   const originalClearInterval = globalThis.clearInterval;
   const timers = new Map();
+  const observers = [];
+  globalThis.window = { addEventListener() {}, removeEventListener() {} };
+  globalThis.MutationObserver = class {
+    disconnected = false;
+    constructor(callback) { this.callback = callback; observers.push(this); }
+    observe() { this.disconnected = false; }
+    disconnect() { this.disconnected = true; }
+  };
   let nextId = 0;
   globalThis.setInterval = (fn, ms) => {
     assert.equal(ms, 300);
@@ -111,6 +124,15 @@ test('亏损提醒：严格大于 100、恢复后移除、无重复横幅，异�
     }
     refresh('-100.000000000000000001 USDT');
     assert.equal(nodes.size, 1, '阈值比较不能丢失精度');
+    refresh('0 USDT');
+    state.amount = '-150 USDT';
+    observers[0].callback([{ type: 'characterData', target: asset }]);
+    await Promise.resolve();
+    assert.equal(nodes.size, 1, '两次轮询之间越线，DOM 变化即触发提醒');
+    state.amount = '0 USDT';
+    observers[0].callback([{ type: 'characterData', target: asset }]);
+    await Promise.resolve();
+    assert.equal(nodes.size, 0, '回到阈值内也立即撤下提醒');
     state.labelCount = 0;
     refresh('-200 USDT');
     assert.equal(nodes.size, 0, '短暂结构异常立即移除过期提醒');
@@ -123,6 +145,7 @@ test('亏损提醒：严格大于 100、恢复后移除、无重复横幅，异�
     refresh('-200 USDT');
     assert.equal(nodes.size, 0, '退出登录移除提醒');
     assert.equal(timers.size, 0, '退出登录停止读取');
+    assert.ok(observers.every((observer) => observer.disconnected), '退出登录断开所有观察');
     assert.equal(isDisabled(), true);
   } finally {
     stopSilently();

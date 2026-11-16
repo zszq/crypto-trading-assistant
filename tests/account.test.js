@@ -118,6 +118,41 @@ test('安装产物：已登录但数量框缺失时，启动超时后显示具�
   assert.match(banners[0].children[0].textContent, /f_order/);
 });
 
+test('安装产物：首屏先出现登录入口时继续等待，会话恢复后才开始结构校验', () => {
+  const script = readFileSync(new URL('../gate-futures-helper.user.js', import.meta.url), 'utf8');
+  const timers = new Map();
+  let loggedIn = false;
+  let structureReads = 0;
+  let now = 0;
+  const box = {
+    querySelectorAll: () => [{ ...control(loggedIn ? '开多' : '登录') }],
+  };
+  vm.runInNewContext(script, {
+    document: {
+      querySelector: () => box,
+      querySelectorAll: (selector) => {
+        if (selector === '.dealbox') { structureReads++; return []; }
+        return [];
+      },
+      getElementById: () => null,
+    },
+    location: { pathname: '/zh/futures/USDT/BTC_USDT' },
+    getComputedStyle, Date: { now: () => now },
+    setInterval: (fn) => { timers.set(1, fn); return 1; },
+    clearInterval: (id) => timers.delete(id),
+    GM_getValue: () => assert.fail('结构未就绪不能读取设置'),
+    GM_xmlhttpRequest: () => assert.fail('结构未就绪不能请求接口'),
+  });
+  for (const tick of [...timers.values()]) tick();
+  assert.equal(structureReads, 0);
+  assert.equal(timers.size, 1, '登录入口可能是首屏临时状态，不能立即停止等待');
+  now = 5000;
+  loggedIn = true;
+  for (const tick of [...timers.values()]) tick();
+  assert.equal(structureReads, 1, '恢复后进入只读结构校验');
+  assert.equal(timers.size, 1);
+});
+
 test('运行中退出登录：不再执行功能，清理计时器、事件和所有登记副作用', () => {
   globalThis.document = documentFor([control('开多')]);
   let calls = 0;
@@ -139,7 +174,7 @@ test('运行中退出登录：不再执行功能，清理计时器、事件和�
   assert.equal(calls, 1);
 });
 
-test('运行中账号持续未知：隐藏旧结果，超过短暂切换宽限后静默清理', async () => {
+test('运行中账号持续未知：立即隐藏旧结果，等待 20 秒后静默清理', async () => {
   const guard = await import('../src/core/guard.js?pending-account-test');
   const originalNow = Date.now;
   let now = 100;
@@ -154,10 +189,84 @@ test('运行中账号持续未知：隐藏旧结果，超过短暂切换宽限�
     assert.equal(cleaned, false);
     now += 3000;
     guard.run('unknown', () => assert.fail('未知账号不能运行功能'));
+    assert.equal(cleaned, false, '慢于 3 秒的页面切换仍保留恢复机会');
+    now += 17000;
+    guard.run('unknown', () => assert.fail('未知账号不能运行功能'));
     assert.ok(cleaned);
     assert.ok(guard.isDisabled());
   } finally {
     Date.now = originalNow;
+  }
+});
+
+test('运行中账号短暂未知超过 3 秒：恢复后继续执行，不沿用此前的结构失败计时', async () => {
+  const guard = await import('../src/core/guard.js?recover-account-test');
+  const originalNow = Date.now;
+  let now = 100;
+  let calls = 0;
+  Date.now = () => now;
+  try {
+    globalThis.document = documentFor([control('开多')]);
+    guard.run('recover', () => { throw new guard.StructureError('临时缺少字段'); });
+    now += 500;
+    globalThis.document = documentFor([]);
+    guard.run('recover', () => assert.fail('账号未知时不能读取数据'));
+    now += 5000;
+    globalThis.document = documentFor([control('开多')]);
+    guard.run('recover', () => { throw new guard.StructureError('临时缺少字段'); });
+    assert.equal(guard.isDisabled(), false);
+    guard.run('recover', () => calls++);
+    assert.equal(calls, 1);
+  } finally {
+    guard.stopSilently();
+    Date.now = originalNow;
+  }
+});
+
+test('持仓加载等待可恢复，加载超时仍整体停用；真正结构异常保留 3 秒宽限', async () => {
+  const originalNow = Date.now;
+  const originalError = console.error;
+  let now = 100;
+  Date.now = () => now;
+  console.error = () => {};
+  try {
+    for (const recover of [true, false]) {
+      const guard = await import(`../src/core/guard.js?pending-data-test-${recover}`);
+      const banners = [];
+      let cleaned = false;
+      let failure;
+      globalThis.document = {
+        ...documentFor([control('开多')]),
+        getElementById: () => null,
+        createElement: () => ({ style: {}, append() {}, addEventListener() {} }),
+        documentElement: { appendChild: (node) => banners.push(node) },
+      };
+      guard.onCleanup(() => { cleaned = true; });
+      const pending = () => { throw new guard.PendingError('持仓数据加载中…'); };
+      guard.run('positions', pending, (error) => { failure = error; });
+      assert.ok(failure instanceof guard.PendingError);
+      now += 5000;
+      guard.run('positions', pending);
+      assert.equal(cleaned, false);
+      if (recover) {
+        guard.run('positions', () => {});
+        now += 20000;
+        guard.run('positions', pending);
+        assert.equal(guard.isDisabled(), false, '成功读取后重置等待期限');
+        guard.run('positions', () => { throw new guard.StructureError('表头改版'); });
+        now += 3000;
+        guard.run('positions', () => { throw new guard.StructureError('表头改版'); });
+      } else {
+        now += 15000;
+        guard.run('positions', pending);
+      }
+      assert.ok(cleaned);
+      assert.ok(guard.isDisabled());
+      assert.equal(banners.length, 1);
+    }
+  } finally {
+    Date.now = originalNow;
+    console.error = originalError;
   }
 });
 

@@ -13,19 +13,13 @@ export function readOrderForm() {
   const qtyInput = qtyInputs[0];
   const unitEl = expect(qtyInput.closest('label')?.querySelector('span.truncate'), '数量单位 span.truncate 未找到');
   const wrapper = expect(qtyInput.closest('.mantine-InputWrapper-root'), '数量输入框外层 .mantine-InputWrapper-root 未找到');
-  // 面板插在“可用”行之前，这一行找不到说明下单区布局变了
-  const anchor = expect(
-    [...dealbox.children].find((el) => /^可用/.test(el.textContent.trim())),
-    '下单区“可用”行未找到'
-  );
-
   // 开仓/平仓共用同一个下单区；平仓不改变均价，只在“开仓”标签下预估
   const orderModule = expect(dealbox.closest('.react-grid-item'), '下单区所在模块 .react-grid-item 未找到');
   const openTab = expect(orderModule.querySelector('#tab-long[role="tab"]'), '“开仓”标签 #tab-long 未找到');
   expect(orderModule.querySelector('#tab-short[role="tab"]'), '“平仓”标签 #tab-short 未找到');
   const isOpen = openTab.getAttribute('aria-selected') === 'true';
 
-  const base = { dealbox, qtyInput, anchor, isOpen, price: NaN, priceStr: '', qtyLong: NaN, qtyShort: NaN, unit: '' };
+  const base = { dealbox, qtyInput, isOpen, price: NaN, priceStr: '', qtyLong: NaN, qtyShort: NaN, unit: '' };
   if (!isOpen) return base;
 
   // 取数量框之前、离它最近的可见文本框作为委托价：限价单里只有价格框，
